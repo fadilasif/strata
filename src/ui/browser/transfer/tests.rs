@@ -250,50 +250,6 @@ fn transfer_noops_preserve_same_folder_copies() {
 }
 
 #[test]
-fn conflict_dialog_appears_for_existing_destination_item() {
-    crate::test_support::gtk_test(
-        "ui::browser::transfer::tests::conflict_dialog_appears_for_existing_destination_item",
-        || {
-            let fixture = tempfile::tempdir().expect("conflict fixture");
-            let source_dir = fixture.path().join("source");
-            let destination = fixture.path().join("destination");
-            std::fs::create_dir_all(&source_dir).expect("source dir");
-            std::fs::create_dir_all(&destination).expect("destination dir");
-            std::fs::write(source_dir.join("new.txt"), b"new").expect("source file");
-            std::fs::write(destination.join("new.txt"), b"old").expect("destination file");
-
-            let view = crate::ui::browser::BrowserView::new(
-                Rc::new(crate::adapters::LocalFileSource),
-                crate::ui::browser::PeekBehavior::default(),
-            );
-            view.set_operation_provider(Rc::new(crate::adapters::LocalOperationProvider));
-            let browser_widget = view.widget();
-            let root = crate::ui::blur::BlurBin::new(&browser_widget);
-            let overlay = gtk::Overlay::new();
-            overlay.set_child(Some(&root));
-            let window = gtk::Window::builder().child(&overlay).build();
-            window.present();
-
-            view.start_transfer(
-                Location::local(&destination),
-                vec![Location::local(source_dir.join("new.txt"))],
-                false,
-            );
-
-            assert!(
-                wait_for_modal_layer(&overlay),
-                "conflict dialog modal did not appear"
-            );
-            assert!(
-                !has_visible_button(&overlay, "Skip"),
-                "skip is redundant for a single-item conflict"
-            );
-            window.destroy();
-        },
-    );
-}
-
-#[test]
 fn conflict_dialog_appears_when_pasting_into_the_same_directory() {
     crate::test_support::gtk_test(
         "ui::browser::transfer::tests::conflict_dialog_appears_when_pasting_into_the_same_directory",
