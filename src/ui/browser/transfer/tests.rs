@@ -53,6 +53,41 @@ fn wait_for_modal_layer(overlay: &gtk::Overlay) -> bool {
     false
 }
 
+fn find_widget_with_class(overlay: &gtk::Overlay, class: &str) -> Option<gtk::Widget> {
+    let mut stack = Vec::new();
+    let mut child = overlay.first_child();
+    while let Some(widget) = child {
+        stack.push(widget.clone());
+        child = widget.next_sibling();
+    }
+    while let Some(widget) = stack.pop() {
+        if widget.has_css_class(class) {
+            return Some(widget);
+        }
+        let mut descendant = widget.first_child();
+        while let Some(next) = descendant {
+            stack.push(next.clone());
+            descendant = next.next_sibling();
+        }
+    }
+    None
+}
+
+#[expect(
+    deprecated,
+    reason = "GTK 4.10 deprecated style_context lookup without a public replacement for reading a widget's resolved theme color"
+)]
+fn resolved_dialog_surface(overlay: &gtk::Overlay) -> String {
+    let dialog = find_widget_with_class(overlay, "action-dialog").expect("conflict dialog");
+    let color = dialog
+        .style_context()
+        .lookup_color("theme_surface")
+        .unwrap_or_else(|| {
+            panic!("the dialog style context must resolve the active theme surface")
+        });
+    color.to_string()
+}
+
 #[test]
 fn duplicate_transfer_uses_the_selected_entries_parent() {
     let entry = |path: &str| FileEntry {
@@ -342,6 +377,116 @@ fn conflict_dialog_offers_skip_for_a_multi_item_paste() {
             assert!(
                 has_visible_button(&overlay, "Skip"),
                 "skip must remain for multi-item pastes"
+            );
+            window.destroy();
+        },
+    );
+}
+
+#[test]
+fn skip_is_hidden_when_only_one_item_conflicts() {
+    crate::test_support::gtk_test(
+        "ui::browser::transfer::tests::skip_is_hidden_when_only_one_item_conflicts",
+        || {
+            let fixture = tempfile::tempdir().expect("conflict fixture");
+            let source_dir = fixture.path().join("source");
+            let destination = fixture.path().join("destination");
+            std::fs::create_dir_all(&source_dir).expect("source dir");
+            std::fs::create_dir_all(&destination).expect("destination dir");
+            std::fs::write(source_dir.join("a.txt"), b"new a").expect("source file");
+            std::fs::write(source_dir.join("b.txt"), b"new b").expect("source file");
+            std::fs::write(source_dir.join("c.txt"), b"new c").expect("source file");
+            std::fs::write(source_dir.join("d.txt"), b"new d").expect("source file");
+            std::fs::write(destination.join("a.txt"), b"old a").expect("destination file");
+
+            let view = crate::ui::browser::BrowserView::new(
+                Rc::new(crate::adapters::LocalFileSource),
+                crate::ui::browser::PeekBehavior::default(),
+            );
+            view.set_operation_provider(Rc::new(crate::adapters::LocalOperationProvider));
+            let browser_widget = view.widget();
+            let root = crate::ui::blur::BlurBin::new(&browser_widget);
+            let overlay = gtk::Overlay::new();
+            overlay.set_child(Some(&root));
+            let window = gtk::Window::builder().child(&overlay).build();
+            window.present();
+
+            view.start_transfer(
+                Location::local(&destination),
+                vec![
+                    Location::local(source_dir.join("a.txt")),
+                    Location::local(source_dir.join("b.txt")),
+                    Location::local(source_dir.join("c.txt")),
+                    Location::local(source_dir.join("d.txt")),
+                ],
+                false,
+            );
+
+            assert!(
+                wait_for_modal_layer(&overlay),
+                "conflict dialog modal did not appear"
+            );
+            assert!(
+                has_visible_button(&overlay, "Replace"),
+                "the single conflicting item must still be resolvable"
+            );
+            assert!(
+                !has_visible_button(&overlay, "Skip"),
+                "skip is redundant when no other name conflicts remain"
+            );
+            window.destroy();
+        },
+    );
+}
+
+#[test]
+fn conflict_dialog_verifies_theme_following() {
+    crate::test_support::gtk_test(
+        "ui::browser::transfer::tests::conflict_dialog_verifies_theme_following",
+        || {
+            let manager = crate::ui::theme::ThemeManager::shared();
+            manager.select_theme("tokyo-night");
+            crate::ui::window::load_styles();
+
+            let fixture = tempfile::tempdir().expect("conflict fixture");
+            let source_dir = fixture.path().join("source");
+            let destination = fixture.path().join("destination");
+            std::fs::create_dir_all(&source_dir).expect("source dir");
+            std::fs::create_dir_all(&destination).expect("destination dir");
+            std::fs::write(source_dir.join("cast.txt"), b"new").expect("source file");
+            std::fs::write(destination.join("cast.txt"), b"old").expect("destination file");
+
+            let view = crate::ui::browser::BrowserView::new(
+                Rc::new(crate::adapters::LocalFileSource),
+                crate::ui::browser::PeekBehavior::default(),
+            );
+            view.set_operation_provider(Rc::new(crate::adapters::LocalOperationProvider));
+            let browser_widget = view.widget();
+            let root = crate::ui::blur::BlurBin::new(&browser_widget);
+            let overlay = gtk::Overlay::new();
+            overlay.set_child(Some(&root));
+            let window = gtk::Window::builder().child(&overlay).build();
+            window.present();
+
+            view.start_transfer(
+                Location::local(&destination),
+                vec![Location::local(source_dir.join("cast.txt"))],
+                false,
+            );
+            assert!(
+                wait_for_modal_layer(&overlay),
+                "conflict dialog modal did not appear"
+            );
+
+            let first = resolved_dialog_surface(&overlay);
+            manager.select_theme("everforest-light-medium");
+            for _ in 0..3 {
+                glib::MainContext::default().iteration(false);
+            }
+            let second = resolved_dialog_surface(&overlay);
+            assert_ne!(
+                first, second,
+                "the conflict dialog must re-theme when the active theme changes"
             );
             window.destroy();
         },

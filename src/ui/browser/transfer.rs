@@ -128,7 +128,6 @@ impl ViewState {
             &explanation,
             !collisions.is_empty(),
             !move_sources,
-            !accepted.is_empty() || !collisions.is_empty(),
             Rc::new(move |choice, apply_to_all| {
                 let mut accepted = accepted.clone();
                 let mut remaining = collisions.clone();
@@ -238,7 +237,6 @@ impl ViewState {
             &explanation,
             !collisions.is_empty(),
             false,
-            !accepted.is_empty() || !collisions.is_empty(),
             Rc::new(move |choice, apply_to_all| {
                 let mut accepted = accepted.clone();
                 let mut remaining = collisions.clone();
@@ -273,7 +271,6 @@ impl ViewState {
         explanation: &str,
         has_more_conflicts: bool,
         allow_keep_both: bool,
-        allow_skip: bool,
         on_choice: Rc<dyn Fn(ConflictChoice, bool)>,
     ) {
         let Some(ModalHost {
@@ -297,7 +294,7 @@ impl ViewState {
         layout.actions.prepend(&apply_all);
         let skip = gtk::Button::with_label("Skip");
         skip.add_css_class("action-dialog-cancel");
-        skip.set_visible(allow_skip);
+        skip.set_visible(has_more_conflicts);
         layout
             .actions
             .insert_child_after(&skip, Some(&layout.cancel));
