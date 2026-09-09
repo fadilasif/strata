@@ -4,6 +4,29 @@ use super::*;
 use crate::model::{FileEntry, Location};
 use std::path::Path;
 
+fn has_visible_button(overlay: &gtk::Overlay, label: &str) -> bool {
+    let mut stack = Vec::new();
+    let mut child = overlay.first_child();
+    while let Some(widget) = child {
+        stack.push(widget.clone());
+        child = widget.next_sibling();
+    }
+    while let Some(widget) = stack.pop() {
+        if let Some(button) = widget.downcast_ref::<gtk::Button>()
+            && button.is_visible()
+            && button.label().as_deref() == Some(label)
+        {
+            return true;
+        }
+        let mut descendant = widget.first_child();
+        while let Some(child) = descendant {
+            stack.push(child.clone());
+            descendant = child.next_sibling();
+        }
+    }
+    false
+}
+
 #[test]
 fn duplicate_transfer_uses_the_selected_entries_parent() {
     let entry = |path: &str| FileEntry {
@@ -57,7 +80,7 @@ fn transfer_collisions_detect_existing_destination_items() -> Result<(), Box<dyn
         &Location::local(&source),
         &Location::local(&destination)
     ));
-    assert!(!transfer_has_collision(
+    assert!(transfer_has_collision(
         &Location::local(&source),
         &Location::local(&source_dir)
     ));
@@ -144,6 +167,47 @@ fn start_transfer_skips_noops_before_emitting_progress() {
 }
 
 #[test]
+fn file_metadata_summary_returns_none_for_empty_metadata() {
+    let metadata = FileMetadata::default();
+    assert!(metadata.summary().is_none());
+}
+
+#[test]
+fn file_metadata_summary_returns_size_only_when_no_modified_date() {
+    let metadata = FileMetadata {
+        size: Some(1024),
+        modified: None,
+    };
+    let summary = metadata.summary().expect("summary should exist");
+    assert!(summary.contains("kB"));
+    assert!(!summary.contains(","));
+}
+
+#[test]
+fn file_metadata_summary_returns_modified_only_when_no_size() {
+    let datetime = glib::DateTime::from_unix_local(1_700_000_000).ok();
+    let metadata = FileMetadata {
+        size: None,
+        modified: datetime,
+    };
+    let summary = metadata.summary().expect("summary should exist");
+    assert!(!summary.contains(","));
+}
+
+#[test]
+fn file_metadata_summary_combines_size_and_modified() {
+    let datetime = glib::DateTime::from_unix_local(1_700_000_000).ok();
+    let metadata = FileMetadata {
+        size: Some(2048),
+        modified: datetime,
+    };
+    let summary = metadata.summary().expect("summary should exist");
+    let parts: Vec<&str> = summary.split(", ").collect();
+    assert_eq!(parts.len(), 2);
+    assert!(parts[0].contains("kB"));
+}
+
+#[test]
 fn transfer_noops_preserve_same_folder_copies() {
     for root in [
         Location::local("/fixture"),
@@ -163,4 +227,180 @@ fn transfer_noops_preserve_same_folder_copies() {
             assert_eq!(transfer_is_noop(&file, &root, moving), moving);
         }
     }
+}
+
+#[test]
+fn conflict_dialog_appears_for_existing_destination_item() {
+    crate::test_support::gtk_test(
+        "ui::browser::transfer::tests::conflict_dialog_appears_for_existing_destination_item",
+        || {
+            let fixture = tempfile::tempdir().expect("conflict fixture");
+            let source_dir = fixture.path().join("source");
+            let destination = fixture.path().join("destination");
+            std::fs::create_dir_all(&source_dir).expect("source dir");
+            std::fs::create_dir_all(&destination).expect("destination dir");
+            std::fs::write(source_dir.join("new.txt"), b"new").expect("source file");
+            std::fs::write(destination.join("new.txt"), b"old").expect("destination file");
+
+            let view = crate::ui::browser::BrowserView::new(
+                Rc::new(crate::adapters::LocalFileSource),
+                crate::ui::browser::PeekBehavior::default(),
+            );
+            view.set_operation_provider(Rc::new(crate::adapters::LocalOperationProvider));
+            let browser_widget = view.widget();
+            let root = crate::ui::blur::BlurBin::new(&browser_widget);
+            let overlay = gtk::Overlay::new();
+            overlay.set_child(Some(&root));
+            let window = gtk::Window::builder().child(&overlay).build();
+            window.present();
+
+            view.start_transfer(
+                Location::local(&destination),
+                vec![Location::local(source_dir.join("new.txt"))],
+                false,
+            );
+
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            let mut has_modal = false;
+            while std::time::Instant::now() < deadline {
+                glib::MainContext::default().iteration(false);
+                std::thread::sleep(std::time::Duration::from_millis(2));
+                let mut child = overlay.first_child();
+                while let Some(widget) = child {
+                    if widget.has_css_class("app-modal-layer") {
+                        has_modal = true;
+                        break;
+                    }
+                    child = widget.next_sibling();
+                }
+                if has_modal {
+                    break;
+                }
+            }
+            assert!(has_modal, "conflict dialog modal did not appear");
+            assert!(
+                !has_visible_button(&overlay, "Skip"),
+                "skip is redundant for a single-item conflict"
+            );
+            window.destroy();
+        },
+    );
+}
+
+#[test]
+fn conflict_dialog_appears_when_pasting_into_the_same_directory() {
+    crate::test_support::gtk_test(
+        "ui::browser::transfer::tests::conflict_dialog_appears_when_pasting_into_the_same_directory",
+        || {
+            let fixture = tempfile::tempdir().expect("conflict fixture");
+            let folder = fixture.path().join("folder");
+            std::fs::create_dir_all(&folder).expect("folder");
+            std::fs::write(folder.join("photo.jpg"), b"photo").expect("photo");
+
+            let view = crate::ui::browser::BrowserView::new(
+                Rc::new(crate::adapters::LocalFileSource),
+                crate::ui::browser::PeekBehavior::default(),
+            );
+            view.set_operation_provider(Rc::new(crate::adapters::LocalOperationProvider));
+            let browser_widget = view.widget();
+            let root = crate::ui::blur::BlurBin::new(&browser_widget);
+            let overlay = gtk::Overlay::new();
+            overlay.set_child(Some(&root));
+            let window = gtk::Window::builder().child(&overlay).build();
+            window.present();
+
+            view.start_transfer(
+                Location::local(&folder),
+                vec![Location::local(folder.join("photo.jpg"))],
+                false,
+            );
+
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            let mut has_modal = false;
+            while std::time::Instant::now() < deadline {
+                glib::MainContext::default().iteration(false);
+                std::thread::sleep(std::time::Duration::from_millis(2));
+                let mut child = overlay.first_child();
+                while let Some(widget) = child {
+                    if widget.has_css_class("app-modal-layer") {
+                        has_modal = true;
+                        break;
+                    }
+                    child = widget.next_sibling();
+                }
+                if has_modal {
+                    break;
+                }
+            }
+            assert!(has_modal, "same-directory conflict dialog did not appear");
+            assert!(
+                !has_visible_button(&overlay, "Skip"),
+                "skip is redundant for a single-item conflict"
+            );
+            window.destroy();
+        },
+    );
+}
+
+#[test]
+fn conflict_dialog_offers_skip_for_a_multi_item_paste() {
+    crate::test_support::gtk_test(
+        "ui::browser::transfer::tests::conflict_dialog_offers_skip_for_a_multi_item_paste",
+        || {
+            let fixture = tempfile::tempdir().expect("conflict fixture");
+            let source_dir = fixture.path().join("source");
+            let destination = fixture.path().join("destination");
+            std::fs::create_dir_all(&source_dir).expect("source dir");
+            std::fs::create_dir_all(&destination).expect("destination dir");
+            std::fs::write(source_dir.join("a.txt"), b"new a").expect("source file");
+            std::fs::write(source_dir.join("b.txt"), b"new b").expect("source file");
+            std::fs::write(destination.join("a.txt"), b"old a").expect("destination file");
+            std::fs::write(destination.join("b.txt"), b"old b").expect("destination file");
+
+            let view = crate::ui::browser::BrowserView::new(
+                Rc::new(crate::adapters::LocalFileSource),
+                crate::ui::browser::PeekBehavior::default(),
+            );
+            view.set_operation_provider(Rc::new(crate::adapters::LocalOperationProvider));
+            let browser_widget = view.widget();
+            let root = crate::ui::blur::BlurBin::new(&browser_widget);
+            let overlay = gtk::Overlay::new();
+            overlay.set_child(Some(&root));
+            let window = gtk::Window::builder().child(&overlay).build();
+            window.present();
+
+            view.start_transfer(
+                Location::local(&destination),
+                vec![
+                    Location::local(source_dir.join("a.txt")),
+                    Location::local(source_dir.join("b.txt")),
+                ],
+                false,
+            );
+
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            let mut has_modal = false;
+            while std::time::Instant::now() < deadline {
+                glib::MainContext::default().iteration(false);
+                std::thread::sleep(std::time::Duration::from_millis(2));
+                let mut child = overlay.first_child();
+                while let Some(widget) = child {
+                    if widget.has_css_class("app-modal-layer") {
+                        has_modal = true;
+                        break;
+                    }
+                    child = widget.next_sibling();
+                }
+                if has_modal {
+                    break;
+                }
+            }
+            assert!(has_modal, "conflict dialog modal did not appear");
+            assert!(
+                has_visible_button(&overlay, "Skip"),
+                "skip must remain for multi-item pastes"
+            );
+            window.destroy();
+        },
+    );
 }
