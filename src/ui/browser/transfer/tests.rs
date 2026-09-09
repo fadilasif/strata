@@ -73,17 +73,45 @@ fn find_widget_with_class(overlay: &gtk::Overlay, class: &str) -> Option<gtk::Wi
     None
 }
 
+fn dialog_symbol(overlay: &gtk::Overlay) -> gtk::CenterBox {
+    find_widget_with_class(overlay, "action-dialog-symbol")
+        .expect("dialog symbol")
+        .downcast::<gtk::CenterBox>()
+        .expect("dialog symbol is a center box")
+}
+
+fn dialog_confirm_button(overlay: &gtk::Overlay) -> gtk::Button {
+    find_widget_with_class(overlay, "action-dialog-confirm")
+        .expect("dialog confirm button")
+        .downcast::<gtk::Button>()
+        .expect("dialog confirm is a button")
+}
+
+fn symbol_icon_texture(overlay: &gtk::Overlay) -> (i32, usize, glib::Bytes) {
+    let icon = dialog_symbol(overlay)
+        .center_widget()
+        .expect("dialog symbol icon")
+        .downcast::<gtk::Image>()
+        .expect("dialog symbol icon is an image");
+    let paintable = icon.paintable().expect("symbol icon paintable");
+    let texture = paintable
+        .downcast::<gtk::gdk::Texture>()
+        .expect("symbol icon renders as a texture");
+    let (bytes, stride) = gtk::gdk::TextureDownloader::new(&texture).download_bytes();
+    (texture.width(), stride, bytes)
+}
+
 #[expect(
     deprecated,
     reason = "GTK 4.10 deprecated style_context lookup without a public replacement for reading a widget's resolved theme color"
 )]
-fn resolved_dialog_surface(overlay: &gtk::Overlay) -> String {
+fn resolved_dialog_color(overlay: &gtk::Overlay, color_name: &str) -> String {
     let dialog = find_widget_with_class(overlay, "action-dialog").expect("conflict dialog");
     let color = dialog
         .style_context()
-        .lookup_color("theme_surface")
+        .lookup_color(color_name)
         .unwrap_or_else(|| {
-            panic!("the dialog style context must resolve the active theme surface")
+            panic!("the dialog style context must resolve the {color_name} theme color")
         });
     color.to_string()
 }
@@ -477,16 +505,43 @@ fn conflict_dialog_verifies_theme_following() {
                 wait_for_modal_layer(&overlay),
                 "conflict dialog modal did not appear"
             );
+            assert!(
+                dialog_symbol(&overlay).has_css_class("danger"),
+                "the conflict symbol must keep the danger tone"
+            );
+            assert!(
+                dialog_confirm_button(&overlay).has_css_class("danger"),
+                "the Replace button must keep the danger tone"
+            );
 
-            let first = resolved_dialog_surface(&overlay);
+            let first_surface = resolved_dialog_color(&overlay, "theme_surface");
+            let first_danger = resolved_dialog_color(&overlay, "theme_danger");
+            let first_icon = symbol_icon_texture(&overlay);
+
             manager.select_theme("everforest-light-medium");
-            for _ in 0..3 {
+            for _ in 0..6 {
                 glib::MainContext::default().iteration(false);
             }
-            let second = resolved_dialog_surface(&overlay);
+
+            let second_surface = resolved_dialog_color(&overlay, "theme_surface");
+            let second_danger = resolved_dialog_color(&overlay, "theme_danger");
+            let second_icon = symbol_icon_texture(&overlay);
             assert_ne!(
-                first, second,
-                "the conflict dialog must re-theme when the active theme changes"
+                first_danger, second_danger,
+                "the Replace button color must re-resolve when the active theme changes"
+            );
+            assert_ne!(
+                first_surface, second_surface,
+                "the dialog must re-theme when the active theme changes"
+            );
+            assert_eq!(
+                first_icon.0, second_icon.0,
+                "the icon texture size must stay stable"
+            );
+            assert_ne!(
+                first_icon.2.as_ref(),
+                second_icon.2.as_ref(),
+                "the conflict icon must be re-rendered with the new theme's danger color"
             );
             window.destroy();
         },
