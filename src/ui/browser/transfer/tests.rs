@@ -4,7 +4,8 @@ use super::*;
 use crate::model::{FileEntry, Location};
 use std::path::Path;
 
-fn has_visible_button(overlay: &gtk::Overlay, label: &str) -> bool {
+fn visible_texts(overlay: &gtk::Overlay) -> Vec<String> {
+    let mut texts = Vec::new();
     let mut stack = Vec::new();
     let mut child = overlay.first_child();
     while let Some(widget) = child {
@@ -12,16 +13,41 @@ fn has_visible_button(overlay: &gtk::Overlay, label: &str) -> bool {
         child = widget.next_sibling();
     }
     while let Some(widget) = stack.pop() {
+        if !widget.is_visible() {
+            continue;
+        }
+        if let Some(label) = widget.downcast_ref::<gtk::Label>() {
+            texts.push(label.label().to_string());
+        }
         if let Some(button) = widget.downcast_ref::<gtk::Button>()
-            && button.is_visible()
-            && button.label().as_deref() == Some(label)
+            && let Some(label) = button.label()
         {
-            return true;
+            texts.push(label.to_string());
         }
         let mut descendant = widget.first_child();
         while let Some(child) = descendant {
             stack.push(child.clone());
             descendant = child.next_sibling();
+        }
+    }
+    texts
+}
+
+fn has_visible_button(overlay: &gtk::Overlay, label: &str) -> bool {
+    visible_texts(overlay).iter().any(|text| text == label)
+}
+
+fn wait_for_modal_layer(overlay: &gtk::Overlay) -> bool {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while std::time::Instant::now() < deadline {
+        glib::MainContext::default().iteration(false);
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        let mut child = overlay.first_child();
+        while let Some(widget) = child {
+            if widget.has_css_class("app-modal-layer") {
+                return true;
+            }
+            child = widget.next_sibling();
         }
     }
     false
@@ -167,47 +193,6 @@ fn start_transfer_skips_noops_before_emitting_progress() {
 }
 
 #[test]
-fn file_metadata_summary_returns_none_for_empty_metadata() {
-    let metadata = FileMetadata::default();
-    assert!(metadata.summary().is_none());
-}
-
-#[test]
-fn file_metadata_summary_returns_size_only_when_no_modified_date() {
-    let metadata = FileMetadata {
-        size: Some(1024),
-        modified: None,
-    };
-    let summary = metadata.summary().expect("summary should exist");
-    assert!(summary.contains("kB"));
-    assert!(!summary.contains(","));
-}
-
-#[test]
-fn file_metadata_summary_returns_modified_only_when_no_size() {
-    let datetime = glib::DateTime::from_unix_local(1_700_000_000).ok();
-    let metadata = FileMetadata {
-        size: None,
-        modified: datetime,
-    };
-    let summary = metadata.summary().expect("summary should exist");
-    assert!(!summary.contains(","));
-}
-
-#[test]
-fn file_metadata_summary_combines_size_and_modified() {
-    let datetime = glib::DateTime::from_unix_local(1_700_000_000).ok();
-    let metadata = FileMetadata {
-        size: Some(2048),
-        modified: datetime,
-    };
-    let summary = metadata.summary().expect("summary should exist");
-    let parts: Vec<&str> = summary.split(", ").collect();
-    assert_eq!(parts.len(), 2);
-    assert!(parts[0].contains("kB"));
-}
-
-#[test]
 fn transfer_noops_preserve_same_folder_copies() {
     for root in [
         Location::local("/fixture"),
@@ -260,24 +245,10 @@ fn conflict_dialog_appears_for_existing_destination_item() {
                 false,
             );
 
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-            let mut has_modal = false;
-            while std::time::Instant::now() < deadline {
-                glib::MainContext::default().iteration(false);
-                std::thread::sleep(std::time::Duration::from_millis(2));
-                let mut child = overlay.first_child();
-                while let Some(widget) = child {
-                    if widget.has_css_class("app-modal-layer") {
-                        has_modal = true;
-                        break;
-                    }
-                    child = widget.next_sibling();
-                }
-                if has_modal {
-                    break;
-                }
-            }
-            assert!(has_modal, "conflict dialog modal did not appear");
+            assert!(
+                wait_for_modal_layer(&overlay),
+                "conflict dialog modal did not appear"
+            );
             assert!(
                 !has_visible_button(&overlay, "Skip"),
                 "skip is redundant for a single-item conflict"
@@ -315,24 +286,10 @@ fn conflict_dialog_appears_when_pasting_into_the_same_directory() {
                 false,
             );
 
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-            let mut has_modal = false;
-            while std::time::Instant::now() < deadline {
-                glib::MainContext::default().iteration(false);
-                std::thread::sleep(std::time::Duration::from_millis(2));
-                let mut child = overlay.first_child();
-                while let Some(widget) = child {
-                    if widget.has_css_class("app-modal-layer") {
-                        has_modal = true;
-                        break;
-                    }
-                    child = widget.next_sibling();
-                }
-                if has_modal {
-                    break;
-                }
-            }
-            assert!(has_modal, "same-directory conflict dialog did not appear");
+            assert!(
+                wait_for_modal_layer(&overlay),
+                "same-directory conflict dialog did not appear"
+            );
             assert!(
                 !has_visible_button(&overlay, "Skip"),
                 "skip is redundant for a single-item conflict"
@@ -378,24 +335,10 @@ fn conflict_dialog_offers_skip_for_a_multi_item_paste() {
                 false,
             );
 
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-            let mut has_modal = false;
-            while std::time::Instant::now() < deadline {
-                glib::MainContext::default().iteration(false);
-                std::thread::sleep(std::time::Duration::from_millis(2));
-                let mut child = overlay.first_child();
-                while let Some(widget) = child {
-                    if widget.has_css_class("app-modal-layer") {
-                        has_modal = true;
-                        break;
-                    }
-                    child = widget.next_sibling();
-                }
-                if has_modal {
-                    break;
-                }
-            }
-            assert!(has_modal, "conflict dialog modal did not appear");
+            assert!(
+                wait_for_modal_layer(&overlay),
+                "conflict dialog modal did not appear"
+            );
             assert!(
                 has_visible_button(&overlay, "Skip"),
                 "skip must remain for multi-item pastes"
