@@ -7,7 +7,7 @@ use crate::ui::browser::ViewState;
 use crate::ui::browser::destination::{
     folder_input_path, resolve_destination_path, setup_transfer_search,
 };
-use crate::ui::browser::entry::item_count_label;
+use crate::ui::browser::entry::{format_file_size, item_count_label};
 use crate::ui::browser::paths::{
     can_remove_location, compact_display_path, compact_native_path, is_trash_location,
 };
@@ -27,6 +27,56 @@ enum ConflictChoice {
     Replace,
     Skip,
     KeepBoth,
+}
+
+#[derive(Clone, Default)]
+struct FileMetadata {
+    size: Option<u64>,
+    modified: Option<glib::DateTime>,
+}
+
+impl FileMetadata {
+    fn summary(&self) -> Option<String> {
+        let mut parts = Vec::new();
+        if let Some(size) = self.size {
+            parts.push(format_file_size(size));
+        }
+        if let Some(ref datetime) = self.modified {
+            parts.push(
+                datetime
+                    .format("%x %X")
+                    .map(|s| s.to_string())
+                    .unwrap_or_default(),
+            );
+        }
+        if parts.is_empty() {
+            None
+        } else {
+            Some(parts.join(", "))
+        }
+    }
+}
+
+async fn query_file_metadata(location: &Location) -> FileMetadata {
+    let file = gio_file_for_location(location);
+    let info = match file
+        .query_info_future(
+            "standard::size,time::modified",
+            gio::FileQueryInfoFlags::NOFOLLOW_SYMLINKS,
+            glib::Priority::DEFAULT,
+        )
+        .await
+    {
+        Ok(info) => info,
+        Err(_) => return FileMetadata::default(),
+    };
+    let size = if info.has_attribute(gio::FILE_ATTRIBUTE_STANDARD_SIZE) {
+        Some(info.size().max(0) as u64)
+    } else {
+        None
+    };
+    let modified = info.modification_date_time();
+    FileMetadata { size, modified }
 }
 
 fn location_exists(location: &Location) -> bool {
@@ -51,7 +101,7 @@ fn transfer_has_collision(source: &Location, destination: &Location) -> bool {
         return false;
     };
     let target = destination.child(name);
-    if source.equal(&target) || source.equal(&destination) || destination.has_prefix(&source) {
+    if source.equal(&destination) || destination.has_prefix(&source) {
         return false;
     }
     target.query_exists(None::<&gio::Cancellable>)
@@ -117,56 +167,75 @@ impl ViewState {
         }
         let source = collisions.remove(0);
         let name = source.display_name();
-        let explanation = format!(
-            "An item named \u{201c}{name}\u{201d} already exists in {}. Replacing it will overwrite its contents.",
-            compact_display_path(&destination)
-        );
-        let state = self.clone();
-        // Move undo/reveal assumes an unrenamed `transfer_target`.
-        self.confirm_replace_conflict(
-            &name,
-            &explanation,
-            !collisions.is_empty(),
-            !move_sources,
-            Rc::new(move |choice, apply_to_all| {
-                let mut accepted = accepted.clone();
-                let mut remaining = collisions.clone();
-                match choice {
-                    ConflictChoice::Replace => {
-                        accepted.push(PasteItem {
-                            source: source.clone(),
-                            conflict: TransferConflict::ReplaceExisting,
-                        });
-                        if apply_to_all {
-                            accepted.extend(remaining.drain(..).map(|source| PasteItem {
-                                source,
+        let weak = Rc::downgrade(self);
+        let dest_for_meta = destination.clone();
+        let source_for_meta = source.clone();
+        let collisions_for_cb = collisions.clone();
+        let accepted_for_cb = accepted.clone();
+        glib::MainContext::default().spawn_local(async move {
+            let source_meta = query_file_metadata(&source_for_meta).await;
+            let dest_child = dest_for_meta.child(
+                &source_for_meta.file_name().unwrap_or_default(),
+            ).unwrap_or(dest_for_meta.clone());
+            let dest_meta = query_file_metadata(&dest_child).await;
+            let Some(state) = weak.upgrade() else {
+                return;
+            };
+            let source_summary = source_meta.summary();
+            let dest_summary = dest_meta.summary();
+            let explanation = format!(
+                "An item named \u{201c}{name}\u{201d} already exists in {}. Replacing it will overwrite its contents.",
+                compact_display_path(&dest_for_meta),
+            );
+            let state_for_confirm = state.clone();
+            state_for_confirm.confirm_replace_conflict(
+                &name,
+                &explanation,
+                source_summary.as_deref(),
+                dest_summary.as_deref(),
+                !collisions_for_cb.is_empty(),
+                !move_sources,
+                !accepted_for_cb.is_empty() || !collisions_for_cb.is_empty(),
+                Rc::new(move |choice, apply_to_all| {
+                    let mut accepted = accepted_for_cb.clone();
+                    let mut remaining = collisions_for_cb.clone();
+                    match choice {
+                        ConflictChoice::Replace => {
+                            accepted.push(PasteItem {
+                                source: source.clone(),
                                 conflict: TransferConflict::ReplaceExisting,
-                            }));
+                            });
+                            if apply_to_all {
+                                accepted.extend(remaining.drain(..).map(|source| PasteItem {
+                                    source,
+                                    conflict: TransferConflict::ReplaceExisting,
+                                }));
+                            }
                         }
-                    }
-                    ConflictChoice::KeepBoth => {
-                        accepted.push(PasteItem {
-                            source: source.clone(),
-                            conflict: TransferConflict::KeepBoth,
-                        });
-                        if apply_to_all {
-                            accepted.extend(remaining.drain(..).map(|source| PasteItem {
-                                source,
+                        ConflictChoice::KeepBoth => {
+                            accepted.push(PasteItem {
+                                source: source.clone(),
                                 conflict: TransferConflict::KeepBoth,
-                            }));
+                            });
+                            if apply_to_all {
+                                accepted.extend(remaining.drain(..).map(|source| PasteItem {
+                                    source,
+                                    conflict: TransferConflict::KeepBoth,
+                                }));
+                            }
                         }
+                        ConflictChoice::Skip if apply_to_all => remaining.clear(),
+                        ConflictChoice::Skip => {}
                     }
-                    ConflictChoice::Skip if apply_to_all => remaining.clear(),
-                    ConflictChoice::Skip => {}
-                }
-                state.resolve_transfer_collisions(
-                    destination.clone(),
-                    remaining,
-                    accepted,
-                    move_sources,
-                );
-            }),
-        );
+                    state.resolve_transfer_collisions(
+                        dest_for_meta.clone(),
+                        remaining,
+                        accepted,
+                        move_sources,
+                    );
+                }),
+            );
+        });
     }
 
     /// Moves the latest completed transfer back, confirming any item that would
@@ -235,8 +304,11 @@ impl ViewState {
         self.confirm_replace_conflict(
             &name,
             &explanation,
+            None,
+            None,
             !collisions.is_empty(),
             false,
+            !accepted.is_empty() || !collisions.is_empty(),
             Rc::new(move |choice, apply_to_all| {
                 let mut accepted = accepted.clone();
                 let mut remaining = collisions.clone();
@@ -265,12 +337,19 @@ impl ViewState {
     }
 
     /// Cancelling abandons the whole operation without calling `on_choice`.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "metadata params added for conflict dialog"
+    )]
     fn confirm_replace_conflict(
         &self,
         name: &str,
         explanation: &str,
+        source_info: Option<&str>,
+        dest_info: Option<&str>,
         has_more_conflicts: bool,
         allow_keep_both: bool,
+        allow_skip: bool,
         on_choice: Rc<dyn Fn(ConflictChoice, bool)>,
     ) {
         let Some(ModalHost {
@@ -289,11 +368,22 @@ impl ViewState {
             ModalTone::Danger,
         );
         layout.body.append(&message_dialog_description(explanation));
+        if let Some(source_info) = source_info {
+            let label = form_label(&format!("Source: {source_info}"));
+            label.add_css_class("conflict-metadata");
+            layout.body.append(&label);
+        }
+        if let Some(dest_info) = dest_info {
+            let label = form_label(&format!("Destination: {dest_info}"));
+            label.add_css_class("conflict-metadata");
+            layout.body.append(&label);
+        }
         let apply_all = form_check_button("Apply this choice to all remaining conflicts");
         apply_all.set_visible(has_more_conflicts);
         layout.body.append(&apply_all);
         let skip = gtk::Button::with_label("Skip");
         skip.add_css_class("action-dialog-cancel");
+        skip.set_visible(allow_skip);
         layout
             .actions
             .insert_child_after(&skip, Some(&layout.cancel));
