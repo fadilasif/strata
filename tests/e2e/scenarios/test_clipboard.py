@@ -228,11 +228,20 @@ def test_pasting_a_duplicate_name_asks_before_replacing(strata):
     assert dialog.name == "File already exists", (
         "a duplicate name must be surfaced rather than silently resolved"
     )
+    assert dialog.find(role="button", name="Skip") is None, (
+        "skip is redundant when only one name conflicts"
+    )
 
-    strata.pointer.click(strata.dialog_button("Skip"))
+    strata.pointer.click(strata.dialog_button("Replace"))
     strata.wait(lambda: strata.dialog() is None, "the conflict dialog to close")
-    assert fixture.path("archive/notes.txt").read_text() == "existing\n", (
-        "skipping must leave the existing file alone"
+    assert fixture.path("archive/notes.txt").read_text() == "notes\n", (
+        "replacing must apply the pasted contents"
+    )
+    assert fixture.path("archive/report.md").is_file(), (
+        "non-conflicting items must still be pasted"
+    )
+    assert fixture.path("archive/spreadsheet.csv").is_file(), (
+        "non-conflicting items must still be pasted"
     )
 
 
