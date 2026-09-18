@@ -15,7 +15,7 @@ use std::{
 
 use rustix::process::{Pid, Signal, kill_process_group};
 
-use crate::services::MediaPreviewSize;
+use crate::services::{ArchiveFormat, MediaPreviewSize, SecretString};
 
 pub(crate) mod browser;
 pub(crate) mod media;
@@ -92,7 +92,7 @@ impl PdfRenderSize {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum ParseOperation {
     ThumbnailImage,
     ThumbnailRaw,
@@ -102,15 +102,26 @@ pub(crate) enum ParseOperation {
     PreviewImage,
     DocumentImage,
     DocumentMermaid,
-    DocumentMath { display: bool },
+    DocumentMath {
+        display: bool,
+    },
     MediaMetadata,
     PreviewWorkbook,
     PreviewPdf(PdfRenderSize),
     PreviewMedia(MediaPreviewSize),
+    /// Archive listing. Carries the dispatch format and an optional password;
+    /// the password travels only inside this in-memory value and an anonymous
+    /// `O_TMPFILE` inode handed to the helper as an inherited descriptor —
+    /// never in helper arguments or the environment, and never under a
+    /// discoverable pathname.
+    ArchiveList {
+        format: ArchiveFormat,
+        password: Option<SecretString>,
+    },
 }
 
 impl ParseOperation {
-    fn argument(self) -> &'static str {
+    fn argument(&self) -> &'static str {
         match self {
             Self::ThumbnailImage => "thumbnail-image",
             Self::ThumbnailRaw => "thumbnail-raw",
@@ -126,24 +137,27 @@ impl ParseOperation {
             Self::PreviewWorkbook => "preview-workbook",
             Self::PreviewPdf(_) => "preview-pdf",
             Self::PreviewMedia(_) => "preview-media",
+            Self::ArchiveList { .. } => "archive-list",
         }
     }
 
-    fn is_media(self) -> bool {
+    fn is_media(&self) -> bool {
         matches!(self, Self::PreviewMedia(_))
     }
 
-    fn output_name(self) -> &'static str {
+    fn output_name(&self) -> &'static str {
         if matches!(self, Self::MediaMetadata | Self::PreviewWorkbook) {
             "result.json"
         } else if self.is_media() {
             "result.media"
+        } else if matches!(self, Self::ArchiveList { .. }) {
+            "result.archive.json"
         } else {
             "result.png"
         }
     }
 
-    fn image_limits(self) -> Option<(u32, u32, u64)> {
+    fn image_limits(&self) -> Option<(u32, u32, u64)> {
         match self {
             Self::ThumbnailImage
             | Self::ThumbnailRaw
@@ -155,11 +169,14 @@ impl ParseOperation {
             | Self::DocumentMermaid
             | Self::DocumentMath { .. } => Some((800, 800, 800 * 800)),
             Self::PreviewPdf(size) => Some(size.image_limits()),
-            Self::PreviewMedia(_) | Self::MediaMetadata | Self::PreviewWorkbook => None,
+            Self::PreviewMedia(_)
+            | Self::MediaMetadata
+            | Self::PreviewWorkbook
+            | Self::ArchiveList { .. } => None,
         }
     }
 
-    fn input_size_limit(self) -> Option<u64> {
+    fn input_size_limit(&self) -> Option<u64> {
         match self {
             Self::ThumbnailImage
             | Self::ThumbnailRaw
@@ -174,10 +191,13 @@ impl ParseOperation {
             Self::DocumentMath { .. } => {
                 Some(crate::services::document_media::MATH_INPUT_LIMIT as u64)
             }
+            // Archives carry their own limits: the TAR.GZ compressed-size gate
+            // is enforced as the first archive-specific step inside the helper.
             Self::ThumbnailVideo
             | Self::ThumbnailAppImage
             | Self::PreviewMedia(_)
-            | Self::MediaMetadata => None,
+            | Self::MediaMetadata
+            | Self::ArchiveList { .. } => None,
         }
     }
 }
@@ -201,7 +221,39 @@ pub(crate) struct ParseOutput {
     pub(crate) pages: i32,
 }
 
+/// Runs a sandboxed preview parse. For archive listings, infrastructure
+/// failures collapse into the Quick Look renderer-failure message (state 6)
+/// so sandbox internals never reach the user; the contract messages
+/// (invalid, too large) and cancellation pass through untouched, and every
+/// other operation keeps its own messages unchanged.
 pub(crate) fn parse(
+    input: &Path,
+    operation: ParseOperation,
+    value: i32,
+    media_backend: MediaPreviewBackend,
+    cancellation: &Cancellation,
+) -> Result<ParseOutput, String> {
+    let archive = matches!(operation, ParseOperation::ArchiveList { .. });
+    let result = parse_sandboxed(input, operation, value, media_backend, cancellation);
+    match result {
+        Err(error)
+            if archive && !cancellation.is_cancelled() && !is_archive_contract_message(&error) =>
+        {
+            Err(crate::adapters::ARCHIVE_PREVIEW_FAILED_MESSAGE.to_owned())
+        }
+        result => result,
+    }
+}
+
+/// Messages that already name their Quick Look state and must never be
+/// collapsed into the generic renderer failure.
+fn is_archive_contract_message(message: &str) -> bool {
+    message == crate::adapters::INVALID_ARCHIVE
+        || message == crate::adapters::ARCHIVE_TOO_LARGE_MESSAGE
+        || message == "Preview cancelled"
+}
+
+fn parse_sandboxed(
     input: &Path,
     operation: ParseOperation,
     value: i32,
@@ -230,6 +282,22 @@ pub(crate) fn parse(
     }
 
     let output = PrivateOutput::create().map_err(|error| error.to_string())?;
+    // The secret lives on an anonymous inode with no directory entry and is
+    // handed to the sandbox child as an inherited file descriptor; the
+    // parent's copy is closed right after spawning so the descriptor's
+    // lifetime in this process is minimal. Every return below drops it.
+    let secret = if let ParseOperation::ArchiveList {
+        password: Some(password),
+        ..
+    } = &operation
+    {
+        Some(stage_secret_anon(
+            output.path(),
+            password.expose().as_bytes(),
+        )?)
+    } else {
+        None
+    };
     let current_executable = std::env::current_exe()
         .map_err(|error| format!("Unable to locate the Strata executable: {error}"))?;
     let running_executable = PathBuf::from(format!("/proc/{}/exe", std::process::id()));
@@ -243,15 +311,26 @@ pub(crate) fn parse(
         &executable,
         &input,
         output.path(),
-        operation,
+        // `ParseOperation` is not `Copy` (archive listings carry a
+        // `SecretString`); the operation is still needed below.
+        operation.clone(),
         value,
         media_backend,
         &devices,
     );
+    if let Some(secret) = &secret {
+        // The descriptor number is not secret; it is only meaningful beside
+        // the inherited descriptor table of this exact child process.
+        use std::os::fd::AsRawFd;
+        command.arg(secret.as_raw_fd().to_string());
+    }
     command.stderr(Stdio::null());
     command.stdout(Stdio::null());
     let mut child = spawn_renderer(&mut command)
         .map_err(|error| format!("Unable to start the preview sandbox: {error}"))?;
+    // The child holds its own reference now; close ours so unrelated
+    // processes spawned later cannot inherit the secret descriptor.
+    drop(secret);
     let timeout = if matches!(
         operation,
         ParseOperation::DocumentImage
@@ -273,12 +352,58 @@ pub(crate) fn parse(
     } else {
         MAX_OUTPUT_BYTES
     };
-    let data = read_private_output(&result_path, limit)?;
-    if !valid_output(operation, &data) {
-        return Err("The preview renderer produced invalid image data".to_owned());
+    let data = read_private_output(&result_path, limit).map_err(|error| {
+        if matches!(operation, ParseOperation::ArchiveList { .. }) {
+            archive_output_error(&error)
+        } else {
+            error.message()
+        }
+    })?;
+    if !valid_output(operation.clone(), &data) {
+        return Err(if matches!(operation, ParseOperation::ArchiveList { .. }) {
+            crate::adapters::INVALID_ARCHIVE.to_owned()
+        } else {
+            "The preview renderer produced invalid image data".to_owned()
+        });
     }
     let (page, pages) = read_metadata(&output.path().join("result.meta"));
     Ok(ParseOutput { data, page, pages })
+}
+
+/// Stages a short secret (an archive password) as an anonymous temporary
+/// inode inside the helper's private output directory.
+///
+/// `O_TMPFILE | O_EXCL` creates the inode with mode 0600 and no directory
+/// entry, and `O_EXCL` additionally refuses any later attempt to link it
+/// into the filesystem — so abrupt termination (including `SIGKILL`, which
+/// skips destructors) cannot leave a discoverable password file behind. The
+/// bytes may still reach filesystem-backed storage; what never exists is a
+/// pathname for them. The inode is reclaimed when the last referencing
+/// descriptor closes.
+///
+/// The returned descriptor deliberately lacks `CLOEXEC`: the sandbox child
+/// must inherit it. The parent closes its own copy right after spawning, and
+/// the helper opens `/proc/self/fd/N` afresh (offset 0) rather than using
+/// the inherited description directly.
+pub(crate) fn stage_secret_anon(
+    directory: &Path,
+    secret: &[u8],
+) -> Result<rustix::fd::OwnedFd, String> {
+    use rustix::fs::{Mode, OFlags, open};
+    use std::io::{Seek, Write};
+
+    let fd = open(
+        directory,
+        OFlags::TMPFILE | OFlags::RDWR | OFlags::EXCL,
+        Mode::from_bits_truncate(0o600),
+    )
+    .map_err(|error| format!("Unable to stage the preview secret: {error}"))?;
+    let mut file = std::fs::File::from(fd);
+    file.write_all(secret)
+        .map_err(|error| format!("Unable to stage the preview secret: {error}"))?;
+    file.seek(std::io::SeekFrom::Start(0))
+        .map_err(|error| format!("Unable to stage the preview secret: {error}"))?;
+    Ok(file.into())
 }
 
 fn resolve_renderer_executable(
@@ -438,7 +563,9 @@ fn sandbox_command(
     media_backend: MediaPreviewBackend,
     devices: &[PathBuf],
 ) -> Command {
-    let mut command = runtime_command(bwrap, operation);
+    // Cloned: `ParseOperation` is not `Copy` (archive listings carry a
+    // `SecretString`) and the operation is inspected again below.
+    let mut command = runtime_command(bwrap, operation.clone());
     let sandbox_input = sandbox_input_path(input);
     command.arg("--ro-bind").arg(executable).arg("/app/strata");
     command.arg("--ro-bind").arg(input).arg(&sandbox_input);
@@ -464,7 +591,7 @@ fn sandbox_command(
             .arg("--cpu=10")
             .arg(format!(
                 "--fsize={}",
-                if operation == ParseOperation::ThumbnailVideo {
+                if matches!(operation, ParseOperation::ThumbnailVideo) {
                     MAX_OUTPUT_BYTES
                 } else {
                     FILE_SIZE_LIMIT_BYTES
@@ -489,6 +616,7 @@ fn sandbox_command(
                 let size = PdfRenderSize::new(size.width, size.height);
                 format!("{value}:{}x{}", size.width, size.height)
             }
+            ParseOperation::ArchiveList { format, .. } => format.extension().to_owned(),
             _ => value.to_string(),
         };
         command.arg(value);
@@ -575,12 +703,14 @@ pub(crate) fn numbered_name(name: &std::ffi::OsStr, prefix: &str) -> bool {
 }
 
 fn valid_output(operation: ParseOperation, data: &[u8]) -> bool {
-    if operation == ParseOperation::PreviewWorkbook {
+    if matches!(operation, ParseOperation::PreviewWorkbook) {
         return crate::services::table::TableData::from_json(data).is_ok();
     }
-    if operation == ParseOperation::MediaMetadata {
+    if matches!(operation, ParseOperation::MediaMetadata) {
         data.len() as u64 <= metadata::MAX_METADATA_BYTES
             && serde_json::from_slice::<serde_json::Value>(data).is_ok()
+    } else if matches!(operation, ParseOperation::ArchiveList { .. }) {
+        crate::adapters::archive_payload_valid(data)
     } else if operation.is_media() {
         false
     } else {
@@ -622,7 +752,7 @@ fn terminate(child: &mut Child) {
     let _waited = child.wait();
 }
 
-fn read_private_output(path: &Path, max_bytes: u64) -> Result<Vec<u8>, String> {
+fn read_private_output(path: &Path, max_bytes: u64) -> Result<Vec<u8>, OutputError> {
     use rustix::fs::{FileType, Mode, OFlags, fstat, open};
 
     // The renderer controls the final entry, but not the host directory ancestors.
@@ -632,24 +762,73 @@ fn read_private_output(path: &Path, max_bytes: u64) -> Result<Vec<u8>, String> {
         OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC | OFlags::NONBLOCK,
         Mode::empty(),
     )
-    .map_err(|_| "The preview renderer produced no output".to_owned())?;
-    let stat = fstat(&fd).map_err(|error| error.to_string())?;
+    .map_err(|_| OutputError::Missing)?;
+    let stat = fstat(&fd).map_err(|error| OutputError::Io(error.to_string()))?;
     if FileType::from_raw_mode(stat.st_mode) != FileType::RegularFile {
-        return Err("The preview renderer produced a non-regular output".to_owned());
+        return Err(OutputError::NonRegular);
     }
     let len = u64::try_from(stat.st_size).unwrap_or(0);
-    if len == 0 || len > max_bytes {
-        return Err("The preview renderer produced an invalid output size".to_owned());
+    if len == 0 {
+        return Err(OutputError::Empty);
+    }
+    if len > max_bytes {
+        return Err(OutputError::Oversize);
     }
     let mut data = Vec::new();
     fs::File::from(fd)
         .take(max_bytes.saturating_add(1))
         .read_to_end(&mut data)
-        .map_err(|error| error.to_string())?;
-    if data.is_empty() || data.len() as u64 > max_bytes {
-        return Err("The preview renderer produced an invalid output size".to_owned());
+        .map_err(|error| OutputError::Io(error.to_string()))?;
+    if data.is_empty() {
+        return Err(OutputError::Empty);
+    }
+    if data.len() as u64 > max_bytes {
+        return Err(OutputError::Oversize);
     }
     Ok(data)
+}
+
+/// How helper-output acquisition can fail.
+///
+/// The archive-listing operation maps these to archive-specific errors;
+/// every other operation keeps the long-standing shared messages through
+/// [`OutputError::message`], unchanged.
+#[derive(Debug, PartialEq)]
+enum OutputError {
+    /// Nothing could be opened at the output path.
+    Missing,
+    /// The output is not a regular file (symlink, FIFO, directory, …).
+    NonRegular,
+    /// The output is empty.
+    Empty,
+    /// The output exceeds the operation's byte limit.
+    Oversize,
+    /// An unexpected I/O failure while inspecting or reading the output.
+    Io(String),
+}
+
+impl OutputError {
+    fn message(&self) -> String {
+        match self {
+            Self::Missing => "The preview renderer produced no output".to_owned(),
+            Self::NonRegular => "The preview renderer produced a non-regular output".to_owned(),
+            Self::Empty | Self::Oversize => {
+                "The preview renderer produced an invalid output size".to_owned()
+            }
+            Self::Io(message) => message.clone(),
+        }
+    }
+}
+
+/// Fail-closed archive-preview mapping for output-stage failures: only an
+/// over-limit payload means the listing is too large; every other
+/// acquisition failure means the listing cannot be trusted at all. Both are
+/// plain errors, so no partial tree can ever reach the caller.
+fn archive_output_error(error: &OutputError) -> String {
+    match error {
+        OutputError::Oversize => crate::adapters::ARCHIVE_TOO_LARGE_MESSAGE.to_owned(),
+        _ => crate::adapters::INVALID_ARCHIVE.to_owned(),
+    }
 }
 
 fn read_metadata(path: &Path) -> (i32, i32) {

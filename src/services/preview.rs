@@ -9,7 +9,7 @@ use std::{
 
 use crate::model::FileEntry;
 
-use super::{DocumentLayout, LoadHandle};
+use super::{DocumentLayout, LoadHandle, operations::ArchiveFormat};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct PreviewRequestId(pub u64);
@@ -35,6 +35,31 @@ impl MediaPreviewSize {
     }
 }
 
+/// A plaintext secret (an archive password) whose `Debug` representation
+/// never exposes the value, so secret-bearing requests and operations can
+/// keep deriving `Debug` without becoming a logging footgun. There is no
+/// memory scrubbing: this guards diagnostic output, not RAM contents.
+/// Obtain the value explicitly with [`SecretString::expose`] only where the
+/// password is genuinely required.
+#[derive(Clone, Eq, PartialEq)]
+pub struct SecretString(String);
+
+impl SecretString {
+    pub fn new(secret: String) -> Self {
+        Self(secret)
+    }
+
+    pub fn expose(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for SecretString {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("[REDACTED]")
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct PreviewRequest {
     pub id: PreviewRequestId,
@@ -43,6 +68,9 @@ pub struct PreviewRequest {
     pub render_document: bool,
     pub pdf_page: i32,
     pub media_size: MediaPreviewSize,
+    /// Password supplied for a protected archive. Never logged and dropped with
+    /// the request; see the password-protected preview policy.
+    pub archive_password: Option<SecretString>,
 }
 
 /// A decode request, not a playable file. Only the sandbox may open `path`.
@@ -108,6 +136,9 @@ pub enum PreviewContent {
         page: i32,
         pages: i32,
     },
+    Archive {
+        tree: ArchivePreviewTree,
+    },
     Unsupported,
 }
 
@@ -119,6 +150,9 @@ pub struct Preview {
     pub content: PreviewContent,
 }
 
+/// Message a provider emits when a protected archive rejected a password.
+pub(crate) const INCORRECT_ARCHIVE_PASSWORD: &str = "The password is incorrect.";
+
 #[derive(Clone, Debug)]
 pub enum PreviewEvent {
     Ready(Preview),
@@ -126,6 +160,11 @@ pub enum PreviewEvent {
         request_id: PreviewRequestId,
         entry: FileEntry,
         message: String,
+    },
+    /// The archive is encrypted and `request_id` carried no usable password.
+    NeedsPassword {
+        request_id: PreviewRequestId,
+        entry: FileEntry,
     },
 }
 
@@ -214,6 +253,278 @@ pub(crate) fn content_family(content_type: &str) -> PreviewContent {
         }
     } else {
         PreviewContent::Unsupported
+    }
+}
+
+/// A single member of an archive listed for a Quick Look preview. Names are
+/// treated as opaque data and never resolved against the host filesystem.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ArchiveFileEntry {
+    pub name: String,
+    pub directory: bool,
+    pub size: u64,
+}
+
+/// A directory node of a virtual archive tree.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ArchiveDirectory {
+    pub name: String,
+    pub children: Vec<ArchiveNode>,
+}
+
+impl Drop for ArchiveDirectory {
+    /// Iterative post-order teardown. Directory nesting depth is
+    /// attacker-controlled (see `archive_preview_tree`), and the default
+    /// recursive drop glue would overflow the call stack on hostile input —
+    /// including while unwinding. Each directory value is dismantled exactly
+    /// once, so this frees precisely what the default drop would.
+    fn drop(&mut self) {
+        if self.children.is_empty() {
+            return;
+        }
+        let mut stack = vec![std::mem::take(&mut self.children)];
+        while let Some(mut children) = stack.pop() {
+            for child in children.drain(..) {
+                if let ArchiveNode::Directory(mut directory) = child {
+                    stack.push(std::mem::take(&mut directory.children));
+                }
+            }
+        }
+    }
+}
+
+/// A node of a virtual archive tree built from flat member lists.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ArchiveNode {
+    Directory(ArchiveDirectory),
+    File { name: String, size: u64 },
+}
+
+/// Navigable contents of an archive preview, with materialized parents and a
+/// total file count across the entire tree.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ArchivePreviewTree {
+    pub root: ArchiveDirectory,
+    pub file_count: usize,
+}
+
+/// Splits a raw archive member name into virtual path components.
+///
+/// Archive member names are data, not host filesystem paths: `/` separates
+/// virtual levels (the convention every listed format — zip, 7z, tar,
+/// tar.gz — uses for member paths), while `\`, `.` and `..` are literal
+/// component text that is never resolved or converted. Empty components
+/// (leading, trailing, or doubled `/`) carry no identity and are dropped,
+/// which is also what lets explicit `name/` directory markers resolve to
+/// the `name` node. This is the single definition shared by the preview
+/// tree and the listing name budget, so the tree can never grow nodes the
+/// budget did not count.
+pub(crate) fn split_archive_name(name: &str) -> Vec<&str> {
+    name.split('/')
+        .filter(|segment| !segment.is_empty())
+        .collect()
+}
+
+/// Builds the navigable tree for the listed members of an archive.
+///
+/// Member identity is preserved exactly: `.` and `..` stay literal virtual
+/// components, `\` is ordinary name text, a path used both as a leaf entry
+/// and as a prefix keeps both nodes, and exact-name duplicates are kept as
+/// separate nodes (node identity is positional, never the display name).
+/// Implicit parent folders are synthesized, and children are ordered
+/// directories-first then alphabetically.
+///
+/// Callers must gate names through the listing/decode name budget
+/// (`list_archive_entries_direct` / `decode_archive_listing`), which counts
+/// components with [`split_archive_name`]: this builds an unbounded tree
+/// from any input, and pathological names reach it nowhere else.
+pub fn archive_preview_tree(entries: Vec<ArchiveFileEntry>) -> ArchivePreviewTree {
+    #[derive(Default)]
+    struct Builder {
+        directory: bool,
+        name: String,
+        size: u64,
+        children: Vec<Builder>,
+        /// Directory child name to its index in `children`. Parent descent
+        /// and directory merging consult this instead of scanning `children`,
+        /// so flat listings with tens of thousands of siblings insert in
+        /// amortized constant time rather than quadratic time. Lookup only:
+        /// file children (including exact-name duplicates) are never indexed
+        /// here, and node identity is always the position in `children`.
+        dirs: std::collections::HashMap<String, usize>,
+    }
+
+    fn insert(seed: &mut Builder, segments: Vec<&str>, directory: bool, size: u64) {
+        let Some(last) = segments.as_slice().split_last() else {
+            return;
+        };
+        let mut current = seed;
+        for parent in last.1 {
+            let next = match current.dirs.get(*parent).copied() {
+                Some(index) => &mut current.children[index],
+                None => {
+                    current
+                        .dirs
+                        .insert((*parent).to_owned(), current.children.len());
+                    current.children.push(Builder {
+                        directory: true,
+                        name: (*parent).to_owned(),
+                        ..Builder::default()
+                    });
+                    let last = current.children.len() - 1;
+                    &mut current.children[last]
+                }
+            };
+            current = next;
+        }
+        if directory {
+            if !current.dirs.contains_key(*last.0) {
+                current
+                    .dirs
+                    .insert((*last.0).to_owned(), current.children.len());
+                current.children.push(Builder {
+                    directory: true,
+                    name: (*last.0).to_owned(),
+                    ..Builder::default()
+                });
+            }
+        } else {
+            // Exact-name duplicates are distinct members and stay distinct
+            // nodes; insertion order between equal names is preserved by the
+            // stable sort below.
+            current.children.push(Builder {
+                directory: false,
+                name: (*last.0).to_owned(),
+                size,
+                ..Builder::default()
+            });
+        }
+    }
+
+    fn sort_and_convert(children: Vec<Builder>) -> (Vec<ArchiveNode>, usize) {
+        // Iterative post-order traversal with an explicit heap-allocated stack:
+        // archive entry paths are attacker-controlled and can nest tens of
+        // thousands of levels deep, which overflowed the call stack when this
+        // descended recursively. Each frame owns its level outright, so no
+        // frame ever borrows from another and nothing here can grow the stack
+        // beyond a single loop iteration.
+        struct Frame {
+            name: String,
+            children: Vec<Builder>,
+            next: usize,
+            nodes: Vec<ArchiveNode>,
+            file_count: usize,
+        }
+
+        fn sort_level(children: &mut [Builder]) {
+            // Lowercasing each name fresh per comparison is O(n log n)
+            // allocations over the whole level; `sort_by_cached_key` computes
+            // each key once. The raw-name tie-break keeps case-equivalent
+            // siblings in an exact, deterministic order.
+            children.sort_by_cached_key(|child| {
+                (
+                    std::cmp::Reverse(child.directory),
+                    child.name.to_ascii_lowercase(),
+                    child.name.clone(),
+                )
+            });
+        }
+
+        let mut root_children = children;
+        sort_level(&mut root_children);
+        let mut stack = vec![Frame {
+            name: String::new(),
+            children: root_children,
+            next: 0,
+            nodes: Vec::new(),
+            file_count: 0,
+        }];
+        while !stack.is_empty() {
+            // Take the next unconverted child, ending the borrow before the
+            // stack is pushed to or popped from below.
+            let advanced = {
+                let Some(frame) = stack.last_mut() else {
+                    break;
+                };
+                if frame.next >= frame.children.len() {
+                    None
+                } else {
+                    let child = std::mem::take(&mut frame.children[frame.next]);
+                    frame.next += 1;
+                    Some(child)
+                }
+            };
+            let Some(child) = advanced else {
+                let frame = stack
+                    .pop()
+                    .expect("levels complete before the stack empties");
+                match stack.last_mut() {
+                    Some(parent) => {
+                        parent.file_count += frame.file_count;
+                        parent.nodes.push(ArchiveNode::Directory(ArchiveDirectory {
+                            name: frame.name,
+                            children: frame.nodes,
+                        }));
+                    }
+                    None => return (frame.nodes, frame.file_count),
+                }
+                continue;
+            };
+            if child.directory {
+                let mut grandchildren = child.children;
+                sort_level(&mut grandchildren);
+                stack.push(Frame {
+                    name: child.name,
+                    children: grandchildren,
+                    next: 0,
+                    nodes: Vec::new(),
+                    file_count: 0,
+                });
+            } else {
+                let Some(frame) = stack.last_mut() else {
+                    unreachable!("a file always has a level awaiting it");
+                };
+                frame.file_count += 1;
+                frame.nodes.push(ArchiveNode::File {
+                    name: child.name,
+                    size: child.size,
+                });
+            }
+        }
+        unreachable!("archive levels complete before the stack empties");
+    }
+
+    let mut root = Builder {
+        directory: true,
+        ..Builder::default()
+    };
+    for entry in entries {
+        let segments = split_archive_name(&entry.name);
+        insert(&mut root, segments, entry.directory, entry.size);
+    }
+    let (children, file_count) = sort_and_convert(root.children);
+    ArchivePreviewTree {
+        root: ArchiveDirectory {
+            name: String::new(),
+            children,
+        },
+        file_count,
+    }
+}
+
+/// Detects archive formats whose Quick Look contents should be listed.
+///
+/// Plain `.gz` (`Rar` and everything else) is deliberately excluded so gzip
+/// streams stay out of the tree preview.
+pub(crate) fn archive_preview_format(name: &OsStr) -> Option<ArchiveFormat> {
+    match ArchiveFormat::from_extension(&name.to_string_lossy()) {
+        Some(
+            format @ (ArchiveFormat::Zip
+            | ArchiveFormat::SevenZ
+            | ArchiveFormat::TarGz
+            | ArchiveFormat::Tar),
+        ) => Some(format),
+        _ => None,
     }
 }
 

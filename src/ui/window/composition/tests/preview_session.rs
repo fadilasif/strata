@@ -40,9 +40,9 @@ fn select(browser: &crate::app::Browser, depth: usize, name: &str) {
 }
 
 #[test]
-fn appearance_and_space_share_a_window_local_preview_session_across_unsupported_selections() {
+fn appearance_and_space_share_a_window_local_preview_session_across_selections() {
     gtk_test(
-        "ui::window::composition::tests::preview_session::appearance_and_space_share_a_window_local_preview_session_across_unsupported_selections",
+        "ui::window::composition::tests::preview_session::appearance_and_space_share_a_window_local_preview_session_across_selections",
         || {
             let directory = tempfile::tempdir().expect("session files");
             std::fs::create_dir(directory.path().join("folder")).expect("folder");
@@ -93,7 +93,7 @@ fn appearance_and_space_share_a_window_local_preview_session_across_unsupported_
             select(&browser, 0, "z.zip");
             assert!(first.content.preview.is_enabled());
             assert!(first_toggle.is_active());
-            assert!(!first.content.preview.is_open());
+            wait(|| first.content.preview.is_open());
             select(&browser, 0, "folder");
             browser.enter_focused_directory();
             wait(|| browser.column_snapshot(1).is_some_and(|c| !c.loading));

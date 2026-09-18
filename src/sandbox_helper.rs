@@ -3,6 +3,7 @@
 use std::{
     fs,
     io::{self, Read},
+    os::fd::RawFd,
     path::Path,
     process::{Child, Command, Output, Stdio},
     sync::mpsc,
@@ -14,8 +15,9 @@ use gdk_pixbuf::prelude::*;
 use gtk::gio;
 
 use crate::{
+    adapters::{encode_archive_result, list_archive_entries_direct},
     sandbox::{MAX_OUTPUT_BYTES, MediaPreviewBackend, PdfRenderSize},
-    services::MediaPreviewSize,
+    services::{ArchiveFormat, MediaPreviewSize},
 };
 
 mod appimage;
@@ -34,7 +36,21 @@ pub(crate) fn run(arguments: &[String]) -> Result<(), String> {
         ),
         _ => (arguments, 0),
     };
-    let [operation, input, output, value, media_backend] = arguments else {
+    // An archive listing may carry one extra argument: the number of an
+    // inherited anonymous descriptor holding the staged password. Anything
+    // else with more than five arguments is a malformed invocation.
+    let secret_fd = match arguments {
+        [operation, ..] if operation == "archive-list" && arguments.len() == 6 => Some(
+            arguments[5]
+                .parse::<RawFd>()
+                .ok()
+                .filter(|fd| *fd >= 0)
+                .ok_or_else(|| "Invalid preview helper secret descriptor".to_owned())?,
+        ),
+        _ if arguments.len() == 5 => None,
+        _ => return Err("Invalid preview helper arguments".to_owned()),
+    };
+    let [operation, input, output, value, media_backend] = &arguments[..5] else {
         return Err("Invalid preview helper arguments".to_owned());
     };
     let input = Path::new(input);
@@ -54,6 +70,9 @@ pub(crate) fn run(arguments: &[String]) -> Result<(), String> {
     }
     if operation == "media-metadata" {
         return write_media_metadata(input, output);
+    }
+    if operation == "archive-list" {
+        return run_archive_list(input, output, value, secret_fd);
     }
     let numeric_value = || {
         value
@@ -93,6 +112,59 @@ pub(crate) fn run(arguments: &[String]) -> Result<(), String> {
             .map_err(|error| error.to_string())?;
     }
     Ok(())
+}
+
+/// Lists an archive inside the sandbox and writes the JSON listing contract.
+///
+/// `format` is the parent's dispatch format (`ArchiveFormat::extension`);
+/// the archive file itself is the only input inspected. `secret_fd` carries
+/// the number of an inherited anonymous descriptor holding a staged
+/// password, if the parent supplied one; its absence selects the probe call.
+/// The descriptor is opened afresh through `/proc/self/fd/N`, so reading
+/// always starts at offset 0. All preview safety limits run here, where the
+/// parsing happens.
+fn run_archive_list(
+    input: &Path,
+    output: &Path,
+    format: &str,
+    secret_fd: Option<RawFd>,
+) -> Result<(), String> {
+    use crate::adapters::MAX_ARCHIVE_PASSWORD_BYTES;
+
+    let format = match format {
+        "zip" => ArchiveFormat::Zip,
+        "7z" => ArchiveFormat::SevenZ,
+        "tar" => ArchiveFormat::Tar,
+        "tar.gz" => ArchiveFormat::TarGz,
+        _ => return Err("Unknown archive format for preview.".to_owned()),
+    };
+    let password = match secret_fd {
+        None => None,
+        Some(descriptor) => {
+            let secret = read_secret_fd(descriptor)?;
+            if secret.len() > MAX_ARCHIVE_PASSWORD_BYTES {
+                return Err("Archive password is too long.".to_owned());
+            }
+            Some(
+                String::from_utf8(secret)
+                    .map_err(|_| "Archive password is not valid text.".to_owned())?,
+            )
+        }
+    };
+    // Cancellation inside the helper arrives as process termination from the
+    // parent, which watches its own cancellation flag while waiting.
+    let cancelled = std::sync::atomic::AtomicBool::new(false);
+    let result = list_archive_entries_direct(input, format, password.as_deref(), &cancelled);
+    fs::write(output, encode_archive_result(&result)).map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+/// Reads the staged archive password through the inherited anonymous
+/// descriptor. Opening `/proc/self/fd/N` starts a fresh description at
+/// offset 0, independent of whatever offset the shared description has.
+fn read_secret_fd(descriptor: RawFd) -> Result<Vec<u8>, String> {
+    fs::read(format!("/proc/self/fd/{descriptor}"))
+        .map_err(|error| format!("Unable to read the preview secret: {error}"))
 }
 
 fn write_media_metadata(input: &Path, output: &Path) -> Result<(), String> {
