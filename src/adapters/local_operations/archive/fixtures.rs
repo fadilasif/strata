@@ -184,8 +184,6 @@ pub(super) fn write_7z_entries(
     Ok(())
 }
 
-/// Writes a 7z fixture without compression, for building large entry-count
-/// fixtures quickly.
 pub(super) fn write_7z_stored(
     path: &Path,
     entries: &[(&str, &[u8])],
@@ -204,9 +202,6 @@ pub(super) fn write_7z_stored(
     Ok(())
 }
 
-/// Overwrites both central-directory entry-count fields in a ZIP's
-/// end-of-central-directory record, simulating a claimed entry count that
-/// does not match the actual members.
 pub(super) fn patch_zip_entry_count(path: &Path, count: u16) -> Result<(), Box<dyn Error>> {
     const END_OF_CENTRAL_DIRECTORY_SIGNATURE: [u8; 4] = [0x50, 0x4b, 0x05, 0x06];
     const DISK_ENTRY_COUNT_OFFSET: usize = 8;

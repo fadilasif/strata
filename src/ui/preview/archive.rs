@@ -1,12 +1,5 @@
 // SPDX-License-Identifier: MIT
 
-//! Read-only, navigable archive tree inside the Quick Look panel.
-//!
-//! The panel header already shows the archive's size and type metadata; this
-//! module renders the member tree: a breadcrumb path for descent, a child
-//! summary line, and a single-column list. Navigation resolves abstract child
-//! indices into the [`ArchivePreviewTree`], never host paths.
-
 use std::{cell::RefCell, rc::Rc};
 
 use gtk::prelude::*;
@@ -19,11 +12,8 @@ use crate::{
 
 use super::format_file_size;
 
-/// The crumb shown for the archive root, which has no name of its own.
 const ROOT_LABEL: &str = "Contents";
 
-/// Descends recursively through `path`; an out-of-range or file index stops at
-/// the deepest directory that can be reached.
 fn directory_at<'a>(root: &'a ArchiveDirectory, path: &[usize]) -> &'a ArchiveDirectory {
     let mut directory = root;
     for &index in path {
@@ -35,7 +25,6 @@ fn directory_at<'a>(root: &'a ArchiveDirectory, path: &[usize]) -> &'a ArchiveDi
     directory
 }
 
-/// Counts the direct files and folders under `directory`.
 fn child_summary(directory: &ArchiveDirectory) -> (usize, usize) {
     directory
         .children
@@ -46,7 +35,6 @@ fn child_summary(directory: &ArchiveDirectory) -> (usize, usize) {
         })
 }
 
-/// The name shown for a directory node; the root has none of its own.
 fn crumb_name(directory: &ArchiveDirectory) -> &str {
     if directory.name.is_empty() {
         ROOT_LABEL
@@ -55,14 +43,7 @@ fn crumb_name(directory: &ArchiveDirectory) -> &str {
     }
 }
 
-/// Navigable archive contents. Widgets expose the interior mutability needed
-/// to rebuild children in place, so `refresh` takes `&self`.
-///
-/// Rows are virtualized: the model holds one lightweight item per child of the
-/// current directory, and the factory only realizes widgets for visible rows.
-/// Materializing tens of thousands of rows upfront hung the main thread long
-/// enough for the compositor's "Application Not Responding" watchdog, so the
-/// row count must never drive widget construction here.
+// Eager widget construction stalls large archives; keep rows virtualized.
 pub(super) struct ArchiveBrowser {
     tree: Rc<ArchivePreviewTree>,
     path: Rc<RefCell<Vec<usize>>>,
@@ -76,8 +57,7 @@ pub(super) struct ArchiveBrowser {
 }
 
 impl ArchiveBrowser {
-    /// Builds the widget tree for `tree`. `navigate` receives the absolute
-    /// depth to jump to (0 = archive root) after a crumb or back click.
+    /// `navigate` receives an absolute depth, with zero denoting the archive root.
     pub(super) fn new(tree: ArchivePreviewTree, navigate: Rc<dyn Fn(usize)>) -> Self {
         let tree = Rc::new(tree);
         let path = Rc::new(RefCell::new(Vec::new()));
@@ -155,10 +135,7 @@ impl ArchiveBrowser {
             match node {
                 ArchiveNode::Directory(child) => {
                     set_primary_icon(&icon, icons::FOLDER);
-                    // Directories render with a trailing slash so a folder and
-                    // a file sharing a display name (a leaf entry colliding
-                    // with a prefix, e.g. `x` and `x/child.txt`) are never
-                    // visually indistinguishable rows.
+                    // Archives may contain a file and a directory with the same name.
                     name_label.set_text(&format!("{}/", crumb_name(child)));
                     size_label.set_visible(false);
                     chevron.set_visible(true);
@@ -216,7 +193,6 @@ impl ArchiveBrowser {
         &self.list
     }
 
-    /// Descends into a directory child.
     pub(super) fn open_child(&mut self, index: usize) {
         if matches!(
             directory_at(&self.tree.root, &self.path.borrow())
@@ -229,7 +205,6 @@ impl ArchiveBrowser {
         }
     }
 
-    /// Jumps to an absolute depth (0 = root).
     pub(super) fn navigate_to(&mut self, depth: usize) {
         let depth = depth.min(self.path.borrow().len());
         self.path.borrow_mut().truncate(depth);
@@ -295,9 +270,6 @@ impl ArchiveBrowser {
         }
     }
 
-    /// Republishes the current directory's children to the model. Only item
-    /// identities change here; the factory realizes widgets for visible rows
-    /// on demand, so this stays cheap no matter how many children there are.
     fn rebuild_rows(&self) {
         let directory = directory_at(&self.tree.root, &self.path.borrow());
         let items: Vec<gtk::StringObject> = (0..directory.children.len())

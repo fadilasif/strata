@@ -169,8 +169,6 @@ fn dir_stats(directory: &ArchiveDirectory) -> (usize, usize) {
 
 #[test]
 fn archive_preview_tree_preserves_literal_segments() {
-    // Member names are data, not host paths: `.` and `..` stay literal
-    // virtual components and doubled slashes contribute no empty node.
     let tree = archive_preview_tree(vec![
         ArchiveFileEntry {
             name: "assets//images/icon.png".to_owned(),
@@ -218,8 +216,6 @@ fn archive_preview_tree_preserves_literal_segments() {
 
 #[test]
 fn archive_preview_tree_keeps_colliding_file_and_directory() {
-    // A leaf entry and a prefix sharing one display name are two distinct
-    // members; both stay visible instead of one winning over the other.
     let tree = archive_preview_tree(vec![
         ArchiveFileEntry {
             name: "x".to_owned(),
@@ -314,8 +310,6 @@ fn archive_preview_tree_handles_moderately_deep_paths() {
 
 #[test]
 fn archive_preview_tree_survives_hostile_nesting_depths() {
-    // Tree construction must not recurse: this depth overflowed the call
-    // stack before the traversal became iterative.
     let depth = 100_000;
     let entries = vec![
         ArchiveFileEntry {
@@ -336,7 +330,6 @@ fn archive_preview_tree_survives_hostile_nesting_depths() {
     ];
     let tree = archive_preview_tree(entries);
     assert_eq!(tree.file_count, 3);
-    // Directories sort before files at every level, including the root.
     assert_eq!(tree.root.children.len(), 3);
     assert_eq!(node_name(&tree.root.children[0]), "a");
     assert_eq!(node_name(&tree.root.children[1]), "b");
@@ -398,9 +391,6 @@ fn archive_preview_tree_keeps_literal_separators_and_collisions_at_depth() {
             size: 4,
         },
     ]);
-    // Backslashes stay literal (`mixed\seps` is one component), dot segments
-    // nest literally, exact-name duplicates are both kept and counted, and
-    // the file/directory `collision` pair keeps both siblings.
     assert_eq!(tree.file_count, 5);
     let mut level = &tree.root;
     for _ in 0..500 {
@@ -425,7 +415,6 @@ fn archive_preview_tree_keeps_literal_separators_and_collisions_at_depth() {
             &("x".repeat(500) + "long-component")
         ]
     );
-    // The literal dot chain nests all the way down to both leaf copies.
     let mut level = level
         .children
         .iter()
@@ -455,10 +444,6 @@ fn archive_preview_tree_keeps_literal_separators_and_collisions_at_depth() {
 
 #[test]
 fn archive_preview_tree_indexes_wide_sibling_lists() {
-    // Regression coverage for the flat-20k hang: each insert used to scan
-    // every previously inserted sibling, making tree construction quadratic
-    // and stalling the main thread past the compositor watchdog. The indexed
-    // insert must preserve the exact dedup and ordering semantics at width.
     let mut entries = Vec::new();
     for index in 0..5000 {
         entries.push(ArchiveFileEntry {
@@ -467,9 +452,6 @@ fn archive_preview_tree_indexes_wide_sibling_lists() {
             size: index as u64,
         });
     }
-    // Collision shapes the index must keep distinct: a file shadowed by a
-    // later directory (both survive, matching long-standing semantics), a
-    // duplicate file (kept as a second node, not collapsed), and a nested path.
     entries.push(ArchiveFileEntry {
         name: "shared".to_owned(),
         directory: false,
@@ -492,7 +474,6 @@ fn archive_preview_tree_indexes_wide_sibling_lists() {
     });
     let tree = archive_preview_tree(entries);
     assert_eq!(tree.file_count, 5003);
-    // Directories sort first, then files alphabetically.
     let names: Vec<_> = tree
         .root
         .children
@@ -509,7 +490,6 @@ fn archive_preview_tree_indexes_wide_sibling_lists() {
     );
     assert_eq!(names[2], (false, "file-00000.txt".to_owned()));
     assert_eq!(names[5001], (false, "file-04999.txt".to_owned()));
-    // Both `shared` file copies survive alongside the directory.
     assert_eq!(
         &names[5002..],
         &[(false, "shared".to_owned()), (false, "shared".to_owned()),]
@@ -536,8 +516,6 @@ fn archive_preview_tree_indexes_wide_sibling_lists() {
 }
 
 fn identity_entries() -> Vec<ArchiveFileEntry> {
-    // The reviewer's exact reproduction set: traversal-looking names, dot
-    // segments, a backslash name, and a leaf/prefix collision.
     [
         "../../etc/passwd",
         "./normal.txt",
@@ -568,17 +546,15 @@ fn find_dir<'a>(directory: &'a ArchiveDirectory, name: &str) -> &'a ArchiveDirec
 }
 
 #[test]
-fn archive_preview_tree_preserves_reviewer_identity_members() {
+fn archive_preview_tree_preserves_literal_member_identities() {
     let tree = archive_preview_tree(identity_entries());
     assert_eq!(tree.file_count, 6);
-    // Backslashes never split: `a\b.txt` is one file, not a folder.
     assert!(
         tree.root
             .children
             .iter()
             .any(|node| matches!(node, ArchiveNode::File { name, .. } if name == "a\\b.txt"))
     );
-    // Dots nest literally instead of resolving away.
     let dot = find_dir(&tree.root, ".");
     assert!(
         dot.children
@@ -599,7 +575,6 @@ fn archive_preview_tree_preserves_reviewer_identity_members() {
             .iter()
             .any(|node| matches!(node, ArchiveNode::File { name, .. } if name == "passwd"))
     );
-    // The leaf/prefix collision keeps both nodes.
     let files: Vec<_> = tree
         .root
         .children
@@ -612,8 +587,6 @@ fn archive_preview_tree_preserves_reviewer_identity_members() {
 
 #[test]
 fn archive_preview_tree_is_independent_of_member_order() {
-    // The same member set in two insertion orders must build equal trees:
-    // order may never silently decide which members survive.
     let forward = identity_entries();
     let mut backward = identity_entries();
     backward.reverse();
@@ -621,18 +594,14 @@ fn archive_preview_tree_is_independent_of_member_order() {
         archive_preview_tree(forward),
         archive_preview_tree(backward)
     );
-    // Exact-name duplicates survive in every order and stay adjacent through
-    // the stable sort.
     let dupe = || ArchiveFileEntry {
         name: "duplicate.txt".to_owned(),
         directory: false,
         size: 1,
     };
-    for entries in [vec![dupe(), dupe()], vec![dupe(), dupe()]] {
-        let tree = archive_preview_tree(entries);
-        assert_eq!(tree.file_count, 2);
-        assert_eq!(tree.root.children.len(), 2);
-    }
+    let tree = archive_preview_tree(vec![dupe(), dupe()]);
+    assert_eq!(tree.file_count, 2);
+    assert_eq!(tree.root.children.len(), 2);
 }
 
 fn password_request(password: Option<&str>) -> super::PreviewRequest {

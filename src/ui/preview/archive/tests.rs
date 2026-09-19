@@ -179,11 +179,6 @@ fn flat_tree(count: usize) -> ArchivePreviewTree {
 
 #[test]
 fn large_directories_model_every_child_without_realizing_rows() {
-    // Regression coverage for the flat-20k hang: rows used to be
-    // materialized as widgets upfront (one per child), which stalled the
-    // main thread past the compositor watchdog. The model must hold every
-    // child while realized widgets stay bounded. A reintroduction would
-    // realize all 2000 rows here and fail the bound below.
     crate::test_support::gtk_test(
         "ui::preview::archive::tests::large_directories_model_every_child_without_realizing_rows",
         || {
@@ -307,9 +302,6 @@ fn mapped_window_binds_visible_archive_rows() {
         child = row.next_sibling();
     }
     window.destroy();
-    // Directories sort first and render with a trailing slash, then files
-    // alphabetically; only the visible window is realized, never the whole
-    // model.
     assert_eq!(names.first().map(String::as_str), Some("docs/"));
     assert!(names.contains(&"a.txt".to_owned()));
     assert!(names.len() <= 3);

@@ -66,8 +66,6 @@ pub(crate) fn entry_supports_quick_preview(entry: &FileEntry) -> bool {
     {
         return false;
     }
-    // Archives are previewable through a header-only listing; remote entries
-    // have no local path to read, so they stay unsupported.
     if entry.location.native_path().is_some()
         && crate::services::archive_preview_format(&entry.native_name).is_some()
     {
@@ -1062,14 +1060,6 @@ impl PreviewState {
         }
     }
 
-    /// Shows the inline password form for a protected archive.
-    ///
-    /// The submitted password travels only inside the next `PreviewRequest`
-    /// and is dropped with it; it is never logged. Sandboxing hands it to
-    /// the helper through an anonymous inode with no directory entry (never
-    /// a named file), so abrupt termination cannot leave a password pathname
-    /// behind; the bytes themselves may still reach filesystem-backed
-    /// storage and are reclaimed when the last descriptor closes.
     fn render_archive_password_prompt(self: &Rc<Self>, entry: FileEntry, error: Option<&str>) {
         self.clear_content();
         self.content_type.set_text(file_extension(&entry));

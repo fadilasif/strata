@@ -35,12 +35,7 @@ impl MediaPreviewSize {
     }
 }
 
-/// A plaintext secret (an archive password) whose `Debug` representation
-/// never exposes the value, so secret-bearing requests and operations can
-/// keep deriving `Debug` without becoming a logging footgun. There is no
-/// memory scrubbing: this guards diagnostic output, not RAM contents.
-/// Obtain the value explicitly with [`SecretString::expose`] only where the
-/// password is genuinely required.
+/// Redacts diagnostic output; does not scrub plaintext from memory.
 #[derive(Clone, Eq, PartialEq)]
 pub struct SecretString(String);
 
@@ -68,8 +63,6 @@ pub struct PreviewRequest {
     pub render_document: bool,
     pub pdf_page: i32,
     pub media_size: MediaPreviewSize,
-    /// Password supplied for a protected archive. Never logged and dropped with
-    /// the request; see the password-protected preview policy.
     pub archive_password: Option<SecretString>,
 }
 
@@ -150,7 +143,6 @@ pub struct Preview {
     pub content: PreviewContent,
 }
 
-/// Message a provider emits when a protected archive rejected a password.
 pub(crate) const INCORRECT_ARCHIVE_PASSWORD: &str = "The password is incorrect.";
 
 #[derive(Clone, Debug)]
@@ -161,7 +153,6 @@ pub enum PreviewEvent {
         entry: FileEntry,
         message: String,
     },
-    /// The archive is encrypted and `request_id` carried no usable password.
     NeedsPassword {
         request_id: PreviewRequestId,
         entry: FileEntry,
@@ -256,8 +247,7 @@ pub(crate) fn content_family(content_type: &str) -> PreviewContent {
     }
 }
 
-/// A single member of an archive listed for a Quick Look preview. Names are
-/// treated as opaque data and never resolved against the host filesystem.
+/// Names are archive data, never paths to resolve against the host filesystem.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ArchiveFileEntry {
     pub name: String,
@@ -265,7 +255,6 @@ pub struct ArchiveFileEntry {
     pub size: u64,
 }
 
-/// A directory node of a virtual archive tree.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ArchiveDirectory {
     pub name: String,
@@ -273,11 +262,7 @@ pub struct ArchiveDirectory {
 }
 
 impl Drop for ArchiveDirectory {
-    /// Iterative post-order teardown. Directory nesting depth is
-    /// attacker-controlled (see `archive_preview_tree`), and the default
-    /// recursive drop glue would overflow the call stack on hostile input —
-    /// including while unwinding. Each directory value is dismantled exactly
-    /// once, so this frees precisely what the default drop would.
+    // Recursive drop glue can overflow the stack on attacker-controlled nesting.
     fn drop(&mut self) {
         if self.children.is_empty() {
             return;
@@ -293,51 +278,27 @@ impl Drop for ArchiveDirectory {
     }
 }
 
-/// A node of a virtual archive tree built from flat member lists.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ArchiveNode {
     Directory(ArchiveDirectory),
     File { name: String, size: u64 },
 }
 
-/// Navigable contents of an archive preview, with materialized parents and a
-/// total file count across the entire tree.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ArchivePreviewTree {
     pub root: ArchiveDirectory,
     pub file_count: usize,
 }
 
-/// Splits a raw archive member name into virtual path components.
-///
-/// Archive member names are data, not host filesystem paths: `/` separates
-/// virtual levels (the convention every listed format — zip, 7z, tar,
-/// tar.gz — uses for member paths), while `\`, `.` and `..` are literal
-/// component text that is never resolved or converted. Empty components
-/// (leading, trailing, or doubled `/`) carry no identity and are dropped,
-/// which is also what lets explicit `name/` directory markers resolve to
-/// the `name` node. This is the single definition shared by the preview
-/// tree and the listing name budget, so the tree can never grow nodes the
-/// budget did not count.
+/// Keep dots and backslashes literal; collapse empty slash components for virtual navigation.
+/// The listing budget must use the same split to bound synthesized directory nodes.
 pub(crate) fn split_archive_name(name: &str) -> Vec<&str> {
     name.split('/')
         .filter(|segment| !segment.is_empty())
         .collect()
 }
 
-/// Builds the navigable tree for the listed members of an archive.
-///
-/// Member identity is preserved exactly: `.` and `..` stay literal virtual
-/// components, `\` is ordinary name text, a path used both as a leaf entry
-/// and as a prefix keeps both nodes, and exact-name duplicates are kept as
-/// separate nodes (node identity is positional, never the display name).
-/// Implicit parent folders are synthesized, and children are ordered
-/// directories-first then alphabetically.
-///
-/// Callers must gate names through the listing/decode name budget
-/// (`list_archive_entries_direct` / `decode_archive_listing`), which counts
-/// components with [`split_archive_name`]: this builds an unbounded tree
-/// from any input, and pathological names reach it nowhere else.
+/// Callers must enforce the listing name budget before constructing this unbounded tree.
 pub fn archive_preview_tree(entries: Vec<ArchiveFileEntry>) -> ArchivePreviewTree {
     #[derive(Default)]
     struct Builder {
@@ -345,12 +306,7 @@ pub fn archive_preview_tree(entries: Vec<ArchiveFileEntry>) -> ArchivePreviewTre
         name: String,
         size: u64,
         children: Vec<Builder>,
-        /// Directory child name to its index in `children`. Parent descent
-        /// and directory merging consult this instead of scanning `children`,
-        /// so flat listings with tens of thousands of siblings insert in
-        /// amortized constant time rather than quadratic time. Lookup only:
-        /// file children (including exact-name duplicates) are never indexed
-        /// here, and node identity is always the position in `children`.
+        // Index only directories: duplicate files must remain distinct members.
         dirs: std::collections::HashMap<String, usize>,
     }
 
@@ -389,9 +345,6 @@ pub fn archive_preview_tree(entries: Vec<ArchiveFileEntry>) -> ArchivePreviewTre
                 });
             }
         } else {
-            // Exact-name duplicates are distinct members and stay distinct
-            // nodes; insertion order between equal names is preserved by the
-            // stable sort below.
             current.children.push(Builder {
                 directory: false,
                 name: (*last.0).to_owned(),
@@ -402,12 +355,7 @@ pub fn archive_preview_tree(entries: Vec<ArchiveFileEntry>) -> ArchivePreviewTre
     }
 
     fn sort_and_convert(children: Vec<Builder>) -> (Vec<ArchiveNode>, usize) {
-        // Iterative post-order traversal with an explicit heap-allocated stack:
-        // archive entry paths are attacker-controlled and can nest tens of
-        // thousands of levels deep, which overflowed the call stack when this
-        // descended recursively. Each frame owns its level outright, so no
-        // frame ever borrows from another and nothing here can grow the stack
-        // beyond a single loop iteration.
+        // Use heap frames so hostile nesting cannot exhaust the call stack.
         struct Frame {
             name: String,
             children: Vec<Builder>,
@@ -417,10 +365,6 @@ pub fn archive_preview_tree(entries: Vec<ArchiveFileEntry>) -> ArchivePreviewTre
         }
 
         fn sort_level(children: &mut [Builder]) {
-            // Lowercasing each name fresh per comparison is O(n log n)
-            // allocations over the whole level; `sort_by_cached_key` computes
-            // each key once. The raw-name tie-break keeps case-equivalent
-            // siblings in an exact, deterministic order.
             children.sort_by_cached_key(|child| {
                 (
                     std::cmp::Reverse(child.directory),
@@ -440,8 +384,6 @@ pub fn archive_preview_tree(entries: Vec<ArchiveFileEntry>) -> ArchivePreviewTre
             file_count: 0,
         }];
         while !stack.is_empty() {
-            // Take the next unconverted child, ending the borrow before the
-            // stack is pushed to or popped from below.
             let advanced = {
                 let Some(frame) = stack.last_mut() else {
                     break;
@@ -512,10 +454,6 @@ pub fn archive_preview_tree(entries: Vec<ArchiveFileEntry>) -> ArchivePreviewTre
     }
 }
 
-/// Detects archive formats whose Quick Look contents should be listed.
-///
-/// Plain `.gz` (`Rar` and everything else) is deliberately excluded so gzip
-/// streams stay out of the tree preview.
 pub(crate) fn archive_preview_format(name: &OsStr) -> Option<ArchiveFormat> {
     match ArchiveFormat::from_extension(&name.to_string_lossy()) {
         Some(

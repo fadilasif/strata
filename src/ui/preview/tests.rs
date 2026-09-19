@@ -391,7 +391,6 @@ fn archive_password_prompt_submits_the_password_and_clears_it_when_closed() {
             drawer.state.password_entry.borrow().is_none(),
             "password cleared from state on close"
         );
-        // A late result for the fresh request must not re-attach the prompt.
         drawer.state.handle_event(
             requests.borrow()[1].id,
             PreviewEvent::NeedsPassword {

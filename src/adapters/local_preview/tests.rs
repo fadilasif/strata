@@ -808,9 +808,6 @@ fn preview_archive_with_password(
     let _handle = provider.load_with_renderer(
         request,
         Rc::new(move |event| events_for_emit.borrow_mut().push(event)),
-        // Mirrors the sandboxed helper invocation without spawning bwrap: the
-        // operation must be an archive listing, and the payload must be the
-        // real helper-side encode of the real core listing.
         move |path, operation, _, _, _| {
             let crate::sandbox::ParseOperation::ArchiveList { format, password } = operation else {
                 panic!("archive previews must request an archive listing");
@@ -1063,9 +1060,6 @@ fn corrupt_encrypted_zip_preview_reports_a_failed_preview() {
 
 #[test]
 fn unsupported_archive_preview_reports_unsupported_format() {
-    // The unsupported listing status (state 8) must surface its own message,
-    // never the invalid-archive message (state 5): the file is fine, this
-    // app cannot preview it.
     crate::test_support::gtk_test(
         "adapters::local_preview::tests::unsupported_archive_preview_reports_unsupported_format",
         || {
