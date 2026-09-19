@@ -40,15 +40,15 @@ fn select(browser: &crate::app::Browser, depth: usize, name: &str) {
 }
 
 #[test]
-fn appearance_and_space_share_a_window_local_preview_session_across_selections() {
+fn appearance_and_space_share_a_window_local_preview_session_across_unsupported_selections() {
     gtk_test(
-        "ui::window::composition::tests::preview_session::appearance_and_space_share_a_window_local_preview_session_across_selections",
+        "ui::window::composition::tests::preview_session::appearance_and_space_share_a_window_local_preview_session_across_unsupported_selections",
         || {
             let directory = tempfile::tempdir().expect("session files");
             std::fs::create_dir(directory.path().join("folder")).expect("folder");
             for (path, data) in [
                 ("a.txt", "alpha"),
-                ("z.zip", "unsupported"),
+                ("z.rar", "unsupported"),
                 ("folder/nested.txt", "nested"),
             ] {
                 std::fs::write(directory.path().join(path), data).expect("fixture file");
@@ -81,7 +81,7 @@ fn appearance_and_space_share_a_window_local_preview_session_across_selections()
             let path = glib::user_config_dir().join("strata/settings.toml");
             let saved = std::fs::read(&path).expect("saved settings");
             let browser = first.content.browser.browser();
-            select(&browser, 0, "z.zip");
+            select(&browser, 0, "z.rar");
             first_toggle.emit_clicked();
             assert!(first.content.preview.is_enabled());
             assert!(first_toggle.is_active());
@@ -90,10 +90,10 @@ fn appearance_and_space_share_a_window_local_preview_session_across_selections()
 
             select(&browser, 0, "a.txt");
             wait(|| first.content.preview.is_open());
-            select(&browser, 0, "z.zip");
+            select(&browser, 0, "z.rar");
             assert!(first.content.preview.is_enabled());
             assert!(first_toggle.is_active());
-            wait(|| first.content.preview.is_open());
+            assert!(!first.content.preview.is_open());
             select(&browser, 0, "folder");
             browser.enter_focused_directory();
             wait(|| browser.column_snapshot(1).is_some_and(|c| !c.loading));
