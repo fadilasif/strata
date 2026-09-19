@@ -583,9 +583,6 @@ fn archive_listings_accept_only_valid_listing_payloads() {
         operation.clone(),
         b"{\"status\":\"bogus\",\"entries\":[]}"
     ));
-    // Well-formed limit and error payloads are valid output: the decoder maps
-    // them to errors, and rejecting them here masked "too large" behind the
-    // generic invalid-output error.
     assert!(valid_output(
         operation.clone(),
         b"{\"status\":\"too-large\",\"entries\":[],\"message\":null}"
@@ -650,9 +647,6 @@ fn archive_output_failures_map_to_archive_errors_not_image_errors() {
             crate::adapters::INVALID_ARCHIVE
         );
     }
-    // The mapping yields plain errors, so a failed output stage can never
-    // produce a partial listing — and the shared messages for every other
-    // operation are unchanged.
     assert_eq!(
         OutputError::Missing.message(),
         "The preview renderer produced no output"
@@ -780,21 +774,8 @@ fn cancelled_requests_fail_without_starting_a_renderer() {
 fn staged_secrets_have_no_directory_entry() {
     use std::os::fd::AsRawFd;
 
-    // The staged secret must have no discoverable pathname, so abrupt
-    // termination cannot leave a password file behind: this asserts the
-    // property itself, not merely that graceful cleanup runs.
-    let directory = tempfile::tempdir().expect("staging directory");
-    let secret = stage_secret_anon(directory.path(), b"s3cret").expect("stage secret");
+    let secret = stage_secret_anon(b"s3cret").expect("stage secret");
     let number = secret.as_raw_fd();
-
-    let names: Vec<_> = std::fs::read_dir(directory.path())
-        .expect("read staging directory")
-        .map(|entry| entry.expect("dir entry").file_name())
-        .collect();
-    assert!(
-        names.is_empty(),
-        "staged secret must not create a directory entry, found {names:?}"
-    );
 
     let link =
         std::fs::read_link(format!("/proc/self/fd/{number}")).expect("inspect secret descriptor");
@@ -818,17 +799,35 @@ fn staged_secrets_have_no_directory_entry() {
         "anonymous secret inode must stay mode-0600"
     );
 
-    // A fresh open starts at offset 0 and returns the staged bytes, which is
-    // exactly how the sandbox helper consumes the secret.
     let round_trip = std::fs::read(format!("/proc/self/fd/{number}")).expect("read secret");
     assert_eq!(round_trip, b"s3cret");
 }
 
 #[test]
+fn staged_secrets_are_inherited_only_when_explicitly_mapped_to_stdin() {
+    use std::os::fd::AsRawFd;
+    use std::process::{Command, Stdio};
+
+    let secret = stage_secret_anon(b"synthetic archive password").expect("stage secret");
+    let path = format!("/proc/self/fd/{}", secret.as_raw_fd());
+    let unrelated = Command::new("/bin/cat")
+        .arg(&path)
+        .output()
+        .expect("spawn unrelated child");
+    assert!(!unrelated.status.success());
+    assert!(unrelated.stdout.is_empty());
+
+    let intended = Command::new("/bin/cat")
+        .arg("/proc/self/fd/0")
+        .stdin(Stdio::from(fs::File::from(secret)))
+        .output()
+        .expect("spawn intended child");
+    assert!(intended.status.success());
+    assert_eq!(intended.stdout, b"synthetic archive password");
+}
+
+#[test]
 fn archive_parse_infra_failures_report_renderer_failure() {
-    // Archive Quick Look exposes no sandbox internals: infrastructure
-    // failures for archive operations collapse into the renderer-failure
-    // message (state 6), while every other operation keeps its own message.
     let error = parse(
         Path::new("does-not-need-to-exist.zip"),
         ParseOperation::ArchiveList {

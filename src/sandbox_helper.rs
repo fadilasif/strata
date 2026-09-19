@@ -36,9 +36,6 @@ pub(crate) fn run(arguments: &[String]) -> Result<(), String> {
         ),
         _ => (arguments, 0),
     };
-    // An archive listing may carry one extra argument: the number of an
-    // inherited anonymous descriptor holding the staged password. Anything
-    // else with more than five arguments is a malformed invocation.
     let secret_fd = match arguments {
         [operation, ..] if operation == "archive-list" && arguments.len() == 6 => Some(
             arguments[5]
@@ -114,15 +111,6 @@ pub(crate) fn run(arguments: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-/// Lists an archive inside the sandbox and writes the JSON listing contract.
-///
-/// `format` is the parent's dispatch format (`ArchiveFormat::extension`);
-/// the archive file itself is the only input inspected. `secret_fd` carries
-/// the number of an inherited anonymous descriptor holding a staged
-/// password, if the parent supplied one; its absence selects the probe call.
-/// The descriptor is opened afresh through `/proc/self/fd/N`, so reading
-/// always starts at offset 0. All preview safety limits run here, where the
-/// parsing happens.
 fn run_archive_list(
     input: &Path,
     output: &Path,
@@ -151,20 +139,23 @@ fn run_archive_list(
             )
         }
     };
-    // Cancellation inside the helper arrives as process termination from the
-    // parent, which watches its own cancellation flag while waiting.
+    // The parent cancels the helper by terminating its process group.
     let cancelled = std::sync::atomic::AtomicBool::new(false);
     let result = list_archive_entries_direct(input, format, password.as_deref(), &cancelled);
     fs::write(output, encode_archive_result(&result)).map_err(|error| error.to_string())?;
     Ok(())
 }
 
-/// Reads the staged archive password through the inherited anonymous
-/// descriptor. Opening `/proc/self/fd/N` starts a fresh description at
-/// offset 0, independent of whatever offset the shared description has.
+// Reopen to read from offset zero without changing the inherited description's offset.
 fn read_secret_fd(descriptor: RawFd) -> Result<Vec<u8>, String> {
-    fs::read(format!("/proc/self/fd/{descriptor}"))
-        .map_err(|error| format!("Unable to read the preview secret: {error}"))
+    let mut secret = Vec::new();
+    fs::File::open(format!("/proc/self/fd/{descriptor}"))
+        .and_then(|file| {
+            file.take(crate::adapters::MAX_ARCHIVE_PASSWORD_BYTES as u64 + 1)
+                .read_to_end(&mut secret)
+        })
+        .map_err(|error| format!("Unable to read the preview secret: {error}"))?;
+    Ok(secret)
 }
 
 fn write_media_metadata(input: &Path, output: &Path) -> Result<(), String> {

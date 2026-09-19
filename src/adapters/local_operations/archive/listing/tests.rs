@@ -56,6 +56,29 @@ fn zip_listing_reads_members_headers_only() {
 }
 
 #[test]
+fn zip_listing_rejects_duplicate_members_instead_of_hiding_them() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("duplicates.zip");
+    write_zip_stored(&path, &[("first.txt", b"first"), ("other.txt", b"second")])
+        .expect("write zip");
+    let mut bytes = std::fs::read(&path).expect("read zip");
+    let offsets: Vec<_> = bytes
+        .windows(9)
+        .enumerate()
+        .filter_map(|(index, value)| (value == b"other.txt").then_some(index))
+        .collect();
+    assert_eq!(offsets.len(), 2);
+    for offset in offsets {
+        bytes[offset..offset + 9].copy_from_slice(b"first.txt");
+    }
+    std::fs::write(&path, bytes).expect("write duplicate names");
+    match list_archive_entries_direct(&path, ArchiveFormat::Zip, None, &never_cancelled()) {
+        Err(message) => assert_eq!(message, super::ARCHIVE_UNSUPPORTED_MESSAGE),
+        Ok(_) => panic!("duplicate ZIP members must not silently collapse"),
+    }
+}
+
+#[test]
 fn zip_listing_distinguishes_directories() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("dirs.zip");
@@ -292,7 +315,6 @@ fn large_plain_tar_members_are_listed_with_correct_sizes() {
     );
 }
 
-/// Counts bytes pulled through `Read` and seeks issued through `Seek`.
 struct CountingReader<R> {
     inner: R,
     bytes_read: std::rc::Rc<std::cell::Cell<u64>>,
@@ -341,8 +363,6 @@ fn plain_tar_listing_seeks_past_member_data_instead_of_reading_it() {
             ("small.txt".to_owned(), false, 2),
         ]
     );
-    // Headers plus the tiny trailing file are a few KiB; the 4 MiB payload
-    // must be skipped with seeks, not reads.
     assert!(
         seeks.get() >= 1,
         "expected at least one seek, got {}",
@@ -699,9 +719,6 @@ fn archive_wire_contract_round_trips_all_statuses() {
 fn archive_payload_validation_accepts_every_known_status() {
     use super::{WireStatus, archive_payload_valid, decode_archive_payload};
 
-    // The output-validity gate must accept well-formed limit and error
-    // payloads: mapping them to errors is the decoder's job, and treating
-    // them as invalid output masked "too large" as "invalid image data".
     for payload in [
         encode_archive_result(&Err(ARCHIVE_TOO_LARGE_MESSAGE.to_owned())),
         encode_archive_result(&Err(super::INVALID_ARCHIVE.to_owned())),
@@ -768,11 +785,6 @@ fn archive_wire_contract_rejects_over_cap_payloads() {
 
 #[test]
 fn archive_wire_contract_rejects_pathological_names_as_too_large() {
-    // C1: a single ~32 MiB "a/" name once built an ~16.7M-node parent tree
-    // (~6 GiB peak RSS). The per-entry name byte/segment caps reject such
-    // payloads at decode, before any tree exists. The payload stays
-    // structurally valid so the sandbox gate maps it to "too large", not
-    // "invalid archive".
     let pathological = [
         "a/".repeat(10_000) + "file.txt",
         "ab/".repeat(5000) + "opaque.txt",
@@ -798,9 +810,6 @@ fn archive_wire_contract_rejects_pathological_names_as_too_large() {
 
 #[test]
 fn archive_wire_contract_rejects_excessive_cumulative_names_as_too_large() {
-    // H1: 20,000 entries sharing a long prefix once stalled the main thread
-    // while the tree and rows were rebuilt. The cumulative name/segment budget
-    // rejects the listing at decode, before any expensive tree construction.
     let prefix = "a/".repeat(400);
     let entries = (0..MAX_ARCHIVE_ENTRIES)
         .map(|index| crate::services::ArchiveFileEntry {
@@ -826,9 +835,7 @@ fn archive_wire_contract_rejects_excessive_cumulative_names_as_too_large() {
 
 #[test]
 fn tar_listing_rejects_pathological_names_as_too_large() {
-    // Helper-side defense in depth: the member-name budget rejects before an
-    // over-budget name is pushed into the listing (here via the per-entry
-    // segment cap; 15,010 bytes stays under the 16 KiB byte cap).
+    // Stay below the byte cap to exercise the independent segment cap.
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("deep.tar");
     let long = "ab/".repeat(5000) + "file.txt";
@@ -883,8 +890,6 @@ fn tar_gz_compressed_gate_allows_exactly_one_gib() {
         .expect("create sparse input")
         .set_len(MAX_TAR_GZ_COMPRESSED_BYTES)
         .expect("size sparse input");
-    // Sparse zeros are not a valid gzip stream: reaching the decoder error
-    // (and not the too-large error) proves the gate uses `>` rather than `>=`.
     match list_archive_entries_direct(&path, ArchiveFormat::TarGz, None, &never_cancelled()) {
         Err(message) => assert_ne!(message, ARCHIVE_TOO_LARGE_MESSAGE),
         Ok(_) => panic!("zeros are not a valid gzip stream"),
@@ -931,9 +936,6 @@ fn tar_gz_listing_rejects_decompressed_output_over_budget() {
         header.set_size(MAX_TAR_GZ_DECOMPRESSED_BYTES + 1);
         header.set_entry_type(tar::EntryType::Regular);
         header.set_mode(0o644);
-        // Streams zeros without materializing them: highly compressible, so
-        // the fixture stays small while the decompressed stream exceeds the
-        // budget in a single member.
         builder
             .append_data(
                 &mut header,
@@ -980,9 +982,6 @@ fn archive_wire_contract_ignores_unknown_fields() {
 #[test]
 fn malformed_inputs_normalize_to_invalid_archive() {
     let dir = tempfile::tempdir().expect("tempdir");
-    // Corruption symptoms normalize to the stable invalid-archive message
-    // (state 5); raw dependency wording must never reach the caller, so these
-    // pins fail if a leak is reintroduced.
     let tar = dir.path().join("junk.tar");
     std::fs::write(&tar, b"this is definitely not an archive file....").expect("write junk");
     match list_archive_entries_direct(&tar, ArchiveFormat::Tar, None, &never_cancelled()) {
@@ -1051,12 +1050,6 @@ fn invalid_tar_inside_valid_gzip_fails() {
     }
 }
 
-/// Manual benchmark for the flat-20k Quick Look hang (see the tree-insert and
-/// row-virtualization fixes): builds the reproducible 20k-entry flat ZIP and
-/// prints per-stage timings for list, encode, decode and tree construction.
-/// No timing thresholds: machines and CI vary too much for those to be stable.
-/// Run explicitly with:
-/// `./scripts/test-headless.py manual_benchmark_flat_zip_20k_pipeline -- --ignored --nocapture`.
 #[test]
 #[ignore = "manual benchmark; run explicitly, not in CI"]
 fn manual_benchmark_flat_zip_20k_pipeline() {
@@ -1104,10 +1097,6 @@ fn manual_benchmark_flat_zip_20k_pipeline() {
 
 #[test]
 fn zip_error_sorts_unsupported_methods_from_corruption() {
-    // Only genuinely unimplemented features are state 8; every other ZIP
-    // failure — including an unknown compression method surfacing anywhere
-    // but the password-retry call — is invalid-or-corrupt (state 5).
-    // Password outcomes never pass through here (see `zip_error`).
     assert_eq!(
         super::zip_error(zip::result::ZipError::UnsupportedArchive("nope")),
         super::ARCHIVE_UNSUPPORTED_MESSAGE
@@ -1134,9 +1123,6 @@ fn zip_error_sorts_unsupported_methods_from_corruption() {
 
 #[test]
 fn unsupported_zip_extra_reports_unsupported_format() {
-    // A well-formed AES archive whose extra-data field this build cannot
-    // parse surfaces the literal `UnsupportedArchive` variant, which is
-    // state 8 (unsupported), not corruption (state 5).
     use std::io::Write as _;
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("aes.zip");
@@ -1175,11 +1161,6 @@ fn unsupported_zip_extra_reports_unsupported_format() {
 
 #[test]
 fn sevenz_unsupported_error_reports_unsupported_format() {
-    // Only the recognized unimplemented-feature variant is state 8; every
-    // other 7z failure — including sibling "unsupported" header variants —
-    // is invalid-or-corrupt (state 5). `Error::Unsupported` is unreachable
-    // through header parsing (its sites build decode stacks), so it is
-    // exercised directly here.
     assert_eq!(
         super::sevenz_list_error(sevenz_rust2::Error::Unsupported("nope".into())),
         super::ARCHIVE_UNSUPPORTED_MESSAGE

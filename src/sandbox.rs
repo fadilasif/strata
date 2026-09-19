@@ -109,11 +109,6 @@ pub(crate) enum ParseOperation {
     PreviewWorkbook,
     PreviewPdf(PdfRenderSize),
     PreviewMedia(MediaPreviewSize),
-    /// Archive listing. Carries the dispatch format and an optional password;
-    /// the password travels only inside this in-memory value and an anonymous
-    /// `O_TMPFILE` inode handed to the helper as an inherited descriptor —
-    /// never in helper arguments or the environment, and never under a
-    /// discoverable pathname.
     ArchiveList {
         format: ArchiveFormat,
         password: Option<SecretString>,
@@ -191,8 +186,6 @@ impl ParseOperation {
             Self::DocumentMath { .. } => {
                 Some(crate::services::document_media::MATH_INPUT_LIMIT as u64)
             }
-            // Archives carry their own limits: the TAR.GZ compressed-size gate
-            // is enforced as the first archive-specific step inside the helper.
             Self::ThumbnailVideo
             | Self::ThumbnailAppImage
             | Self::PreviewMedia(_)
@@ -221,11 +214,6 @@ pub(crate) struct ParseOutput {
     pub(crate) pages: i32,
 }
 
-/// Runs a sandboxed preview parse. For archive listings, infrastructure
-/// failures collapse into the Quick Look renderer-failure message (state 6)
-/// so sandbox internals never reach the user; the contract messages
-/// (invalid, too large) and cancellation pass through untouched, and every
-/// other operation keeps its own messages unchanged.
 pub(crate) fn parse(
     input: &Path,
     operation: ParseOperation,
@@ -245,8 +233,6 @@ pub(crate) fn parse(
     }
 }
 
-/// Messages that already name their Quick Look state and must never be
-/// collapsed into the generic renderer failure.
 fn is_archive_contract_message(message: &str) -> bool {
     message == crate::adapters::INVALID_ARCHIVE
         || message == crate::adapters::ARCHIVE_TOO_LARGE_MESSAGE
@@ -282,19 +268,12 @@ fn parse_sandboxed(
     }
 
     let output = PrivateOutput::create().map_err(|error| error.to_string())?;
-    // The secret lives on an anonymous inode with no directory entry and is
-    // handed to the sandbox child as an inherited file descriptor; the
-    // parent's copy is closed right after spawning so the descriptor's
-    // lifetime in this process is minimal. Every return below drops it.
     let secret = if let ParseOperation::ArchiveList {
         password: Some(password),
         ..
     } = &operation
     {
-        Some(stage_secret_anon(
-            output.path(),
-            password.expose().as_bytes(),
-        )?)
+        Some(stage_secret_anon(password.expose().as_bytes())?)
     } else {
         None
     };
@@ -311,26 +290,21 @@ fn parse_sandboxed(
         &executable,
         &input,
         output.path(),
-        // `ParseOperation` is not `Copy` (archive listings carry a
-        // `SecretString`); the operation is still needed below.
         operation.clone(),
         value,
         media_backend,
         &devices,
     );
-    if let Some(secret) = &secret {
-        // The descriptor number is not secret; it is only meaningful beside
-        // the inherited descriptor table of this exact child process.
-        use std::os::fd::AsRawFd;
-        command.arg(secret.as_raw_fd().to_string());
+    if let Some(secret) = secret {
+        // Command duplicates only this child's stdin; concurrent spawns cannot inherit the secret.
+        command.stdin(Stdio::from(fs::File::from(secret)));
+        command.arg("0");
     }
     command.stderr(Stdio::null());
     command.stdout(Stdio::null());
     let mut child = spawn_renderer(&mut command)
         .map_err(|error| format!("Unable to start the preview sandbox: {error}"))?;
-    // The child holds its own reference now; close ours so unrelated
-    // processes spawned later cannot inherit the secret descriptor.
-    drop(secret);
+    drop(command);
     let timeout = if matches!(
         operation,
         ParseOperation::DocumentImage
@@ -370,34 +344,16 @@ fn parse_sandboxed(
     Ok(ParseOutput { data, page, pages })
 }
 
-/// Stages a short secret (an archive password) as an anonymous temporary
-/// inode inside the helper's private output directory.
-///
-/// `O_TMPFILE | O_EXCL` creates the inode with mode 0600 and no directory
-/// entry, and `O_EXCL` additionally refuses any later attempt to link it
-/// into the filesystem — so abrupt termination (including `SIGKILL`, which
-/// skips destructors) cannot leave a discoverable password file behind. The
-/// bytes may still reach filesystem-backed storage; what never exists is a
-/// pathname for them. The inode is reclaimed when the last referencing
-/// descriptor closes.
-///
-/// The returned descriptor deliberately lacks `CLOEXEC`: the sandbox child
-/// must inherit it. The parent closes its own copy right after spawning, and
-/// the helper opens `/proc/self/fd/N` afresh (offset 0) rather than using
-/// the inherited description directly.
-pub(crate) fn stage_secret_anon(
-    directory: &Path,
-    secret: &[u8],
-) -> Result<rustix::fd::OwnedFd, String> {
-    use rustix::fs::{Mode, OFlags, open};
+// A memfd avoids named-file residue and dependence on TMPDIR's O_TMPFILE support.
+// CLOEXEC prevents unrelated children from inheriting it before the renderer spawns.
+pub(crate) fn stage_secret_anon(secret: &[u8]) -> Result<rustix::fd::OwnedFd, String> {
+    use rustix::fs::{MemfdFlags, Mode, fchmod, memfd_create};
     use std::io::{Seek, Write};
 
-    let fd = open(
-        directory,
-        OFlags::TMPFILE | OFlags::RDWR | OFlags::EXCL,
-        Mode::from_bits_truncate(0o600),
-    )
-    .map_err(|error| format!("Unable to stage the preview secret: {error}"))?;
+    let fd = memfd_create(c"strata-preview-password", MemfdFlags::CLOEXEC)
+        .map_err(|error| format!("Unable to stage the preview secret: {error}"))?;
+    fchmod(&fd, Mode::from_bits_truncate(0o600))
+        .map_err(|error| format!("Unable to stage the preview secret: {error}"))?;
     let mut file = std::fs::File::from(fd);
     file.write_all(secret)
         .map_err(|error| format!("Unable to stage the preview secret: {error}"))?;
@@ -563,8 +519,6 @@ fn sandbox_command(
     media_backend: MediaPreviewBackend,
     devices: &[PathBuf],
 ) -> Command {
-    // Cloned: `ParseOperation` is not `Copy` (archive listings carry a
-    // `SecretString`) and the operation is inspected again below.
     let mut command = runtime_command(bwrap, operation.clone());
     let sandbox_input = sandbox_input_path(input);
     command.arg("--ro-bind").arg(executable).arg("/app/strata");
@@ -788,22 +742,12 @@ fn read_private_output(path: &Path, max_bytes: u64) -> Result<Vec<u8>, OutputErr
     Ok(data)
 }
 
-/// How helper-output acquisition can fail.
-///
-/// The archive-listing operation maps these to archive-specific errors;
-/// every other operation keeps the long-standing shared messages through
-/// [`OutputError::message`], unchanged.
 #[derive(Debug, PartialEq)]
 enum OutputError {
-    /// Nothing could be opened at the output path.
     Missing,
-    /// The output is not a regular file (symlink, FIFO, directory, …).
     NonRegular,
-    /// The output is empty.
     Empty,
-    /// The output exceeds the operation's byte limit.
     Oversize,
-    /// An unexpected I/O failure while inspecting or reading the output.
     Io(String),
 }
 
@@ -820,10 +764,6 @@ impl OutputError {
     }
 }
 
-/// Fail-closed archive-preview mapping for output-stage failures: only an
-/// over-limit payload means the listing is too large; every other
-/// acquisition failure means the listing cannot be trusted at all. Both are
-/// plain errors, so no partial tree can ever reach the caller.
 fn archive_output_error(error: &OutputError) -> String {
     match error {
         OutputError::Oversize => crate::adapters::ARCHIVE_TOO_LARGE_MESSAGE.to_owned(),

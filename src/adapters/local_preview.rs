@@ -294,24 +294,23 @@ impl LocalPreviewProvider {
                         MediaPreviewBackend::Software,
                         &cancellation,
                     )?;
-                    decode_archive_listing(&output.data)
+                    decode_archive_listing(&output.data).map(|listing| {
+                        let tree = crate::services::archive_preview_tree(listing.entries);
+                        (listing.status, tree)
+                    })
                 })
                 .await;
                 if cancellation_for_task.is_cancelled() {
                     return;
                 }
                 match listed {
-                    Ok(Ok(listing)) => match listing.status {
+                    Ok(Ok((status, tree))) => match status {
                         ArchiveListingStatus::Open => {
-                            // Terminal: later preview stages reuse `render`,
-                            // which is moved into the listing call above.
                             emit(PreviewEvent::Ready(Preview {
                                 request_id,
                                 entry,
                                 content_type,
-                                content: PreviewContent::Archive {
-                                    tree: crate::services::archive_preview_tree(listing.entries),
-                                },
+                                content: PreviewContent::Archive { tree },
                             }));
                             return;
                         }

@@ -222,11 +222,8 @@ fn archive_list_output(
     password: Option<&[u8]>,
 ) -> Vec<u8> {
     let output = directory.path().join("result.archive.json");
-    // The secret lives on an anonymous inode with no directory entry; our
-    // copy stays open until the helper run below returns.
-    let secret = password.map(|password| {
-        crate::sandbox::stage_secret_anon(directory.path(), password).expect("stage secret")
-    });
+    let secret =
+        password.map(|password| crate::sandbox::stage_secret_anon(password).expect("stage secret"));
     let mut arguments = vec![
         "archive-list".to_owned(),
         input.to_string_lossy().into_owned(),
@@ -378,10 +375,11 @@ fn archive_list_rejects_overlong_password() {
     let input = directory.path().join("docs.tar");
     write_tar_fixture(&input, &[("readme.txt", b"hi")]);
     let output = directory.path().join("result.archive.json");
-    let secret = crate::sandbox::stage_secret_anon(
-        directory.path(),
-        &vec![b'x'; crate::adapters::MAX_ARCHIVE_PASSWORD_BYTES + 1],
-    )
+    let secret = crate::sandbox::stage_secret_anon(&vec![
+        b'x';
+        crate::adapters::MAX_ARCHIVE_PASSWORD_BYTES
+            + 1
+    ])
     .expect("stage password");
     use std::os::fd::AsRawFd;
     let error = run(&[
@@ -402,8 +400,7 @@ fn archive_list_rejects_non_utf8_password() {
     let input = directory.path().join("docs.tar");
     write_tar_fixture(&input, &[("readme.txt", b"hi")]);
     let output = directory.path().join("result.archive.json");
-    let secret =
-        crate::sandbox::stage_secret_anon(directory.path(), &[0xFF, 0xFE]).expect("stage password");
+    let secret = crate::sandbox::stage_secret_anon(&[0xFF, 0xFE]).expect("stage password");
     use std::os::fd::AsRawFd;
     let error = run(&[
         "archive-list".to_owned(),
@@ -423,13 +420,7 @@ fn archive_list_rejects_an_unreadable_secret_descriptor() {
     let input = directory.path().join("docs.tar");
     write_tar_fixture(&input, &[("readme.txt", b"hi")]);
     let output = directory.path().join("result.archive.json");
-    // Close an fd, then hand its (now unopened) number to the helper: there
-    // is no pathname to confuse, only a dangling number.
-    let number = {
-        let spare = std::fs::File::open(&input).expect("open fixture");
-        use std::os::fd::AsRawFd;
-        spare.as_raw_fd()
-    };
+    let number = i32::MAX;
     let error = run(&[
         "archive-list".to_owned(),
         input.to_string_lossy().into_owned(),
