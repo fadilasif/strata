@@ -673,7 +673,7 @@ fn budget_reader_never_returns_more_than_the_remaining_budget() {
     let mut reader = budget_reader(b"hello world", 3, &flag);
     let mut buf = [0u8; 100];
     assert_eq!(reader.read(&mut buf).expect("capped read"), 3);
-    assert_eq!(&buf[..3], b"hel");
+    assert_eq!(&buf[..3], &b"hello world"[..3]);
 }
 
 #[test]
@@ -1155,7 +1155,7 @@ fn unsupported_zip_extra_reports_unsupported_format() {
     std::fs::write(&path, &bytes).expect("patch extra");
     match list_archive_entries_direct(&path, ArchiveFormat::Zip, None, &never_cancelled()) {
         Err(message) => assert_eq!(message, super::ARCHIVE_UNSUPPORTED_MESSAGE),
-        Ok(_) => panic!("unparseable-extra zip must fail"),
+        Ok(_) => panic!("unparsable-extra zip must fail"),
     }
 }
 
