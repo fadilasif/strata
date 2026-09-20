@@ -4919,8 +4919,8 @@ menubutton.icons-thumbnail-menu > button:focus-visible {
 }
 
 .file-icons > child:focus-visible .icons-card-icon-frame {
-  outline: 2px solid @theme_accent;
-  outline-offset: -2px;
+  outline: 1px solid @theme_accent;
+  outline-offset: -1px;
 }
 
 .icons-card {
