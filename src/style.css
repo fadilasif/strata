@@ -4025,7 +4025,7 @@ textview > popover.menu button.model:focus-visible {
   border-radius: 6px;
   margin: 1px 8px;
   padding: 0;
-  transition: background 160ms ease-out, color 160ms ease-out;
+  transition: color 160ms ease-out;
 }
 
 .file-list row {
@@ -4037,7 +4037,7 @@ textview > popover.menu button.model:focus-visible {
 .list-row {
   outline: 1px solid transparent;
   outline-offset: -1px;
-  transition: background 220ms ease-out, color 180ms ease-out, outline-color 220ms ease-out, transform 200ms cubic-bezier(0.2, 0.9, 0.3, 1.2), opacity 200ms ease-out;
+  transition: color 180ms ease-out, transform 200ms cubic-bezier(0.2, 0.9, 0.3, 1.2), opacity 200ms ease-out;
 }
 
 .icons-card {
