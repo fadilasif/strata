@@ -64,7 +64,8 @@ impl Dispatcher {
                 | Modifiers::SUPER_MASK
                 | Modifiers::SHIFT_MASK,
         ) || event.text_has_focus()
-            || !self.view.item_view_has_focus()
+            || (!self.view.item_view_has_focus()
+                && !self.preview.archive_list_has_focus(event.focused.as_ref()))
         {
             return None;
         }

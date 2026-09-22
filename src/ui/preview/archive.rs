@@ -226,6 +226,7 @@ impl ArchiveBrowser {
         if count == 0 {
             return false;
         }
+        self.sync_cursor_to_selection();
         let current = self.cursor.get().min(count - 1);
         let next = (current as isize + delta).clamp(0, count as isize - 1) as usize;
         if next == current {
@@ -238,6 +239,7 @@ impl ArchiveBrowser {
 
     /// Enters the highlighted directory, leaving files and empty directories untouched.
     pub(super) fn open_cursor(&mut self) -> bool {
+        self.sync_cursor_to_selection();
         let directory = directory_at(&self.tree.root, &self.path.borrow());
         if !matches!(
             directory.children.get(self.cursor.get()),
@@ -269,6 +271,10 @@ impl ArchiveBrowser {
             self.path.borrow_mut().push(index);
             self.cursor.set(0);
             self.refresh();
+        } else {
+            // Activation implies the row is selected; adopt it so the next
+            // keyboard step continues from here instead of a stale cursor.
+            self.sync_cursor_to_selection();
         }
     }
 
@@ -371,6 +377,20 @@ impl ArchiveBrowser {
         self.selection.set_selected(index);
         // Scrolling without FOCUS keeps the drawer's focus in the browser list.
         self.list.scroll_to(index, gtk::ListScrollFlags::NONE, None);
+    }
+
+    /// The selection model is user-mutable (pointer clicks, native list
+    /// keys), so adopt it before keyboard steps; otherwise the first key
+    /// after pointer use is a no-op or jumps backward.
+    fn sync_cursor_to_selection(&self) {
+        let selected = self.selection.selected();
+        if selected == gtk::INVALID_LIST_POSITION {
+            return;
+        }
+        let count = self.model.n_items() as usize;
+        if count > 0 {
+            self.cursor.set((selected as usize).min(count - 1));
+        }
     }
 }
 

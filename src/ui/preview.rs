@@ -581,6 +581,13 @@ impl PreviewDrawer {
         self.state.archive_key(key)
     }
 
+    /// Whether keyboard focus sits inside the archive tree list, so its
+    /// arrows keep routing there instead of falling through to the list's
+    /// own key handling.
+    pub fn archive_list_has_focus(&self, focused: Option<&gtk::Widget>) -> bool {
+        self.state.archive_list_has_focus(focused)
+    }
+
     pub fn toggle(&self, entry: Option<FileEntry>, depth: Option<usize>) {
         self.state.toggle(entry, depth);
     }
@@ -1336,6 +1343,18 @@ impl PreviewState {
         if let Some(browser) = self.sizing.browser() {
             browser.set_archive_preview_active(active);
         }
+    }
+
+    fn archive_list_has_focus(&self, focused: Option<&gtk::Widget>) -> bool {
+        self.archive_browser
+            .borrow()
+            .as_ref()
+            .is_some_and(|browser| {
+                focused.is_some_and(|focused| {
+                    focused == browser.list().upcast_ref::<gtk::Widget>()
+                        || focused.is_ancestor(browser.list())
+                })
+            })
     }
 
     fn open_archive_row(self: &Rc<Self>, position: u32) {

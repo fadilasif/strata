@@ -301,6 +301,34 @@ fn archive_preview_keys_navigate_the_tree_without_moving_the_listing() {
 }
 
 #[test]
+fn archive_keys_route_when_the_preview_list_has_focus() {
+    crate::test_support::gtk_test(
+        "ui::window::tests::keyboard_dispatch::archive_keys_route_when_the_preview_list_has_focus",
+        || {
+            let fixture = KeyboardFixture::with_archive();
+            assert!(fixture.press(Key::space, ModifierType::empty()));
+            wait_until(|| {
+                widget_with_class(&fixture.preview.widget(), "preview-archive").is_some()
+            });
+            let list = widget_with_class(&fixture.preview.widget(), "preview-archive-list")
+                .expect("archive list");
+            wait_until(|| list.is_mapped());
+            assert!(list.grab_focus());
+            assert!(!fixture.view.item_view_has_focus());
+            // Arrows keep driving the tree instead of falling through to the
+            // list's own key handling or the listing.
+            assert!(fixture.press(Key::Down, ModifierType::empty()));
+            assert_eq!(fixture.selected(), [1]);
+            assert!(fixture.press(Key::Up, ModifierType::empty()));
+            assert_eq!(fixture.selected(), [1]);
+            assert!(fixture.press(Key::Escape, ModifierType::empty()));
+            wait_until(|| !fixture.preview.is_open());
+            assert_eq!(fixture.selected(), [1]);
+        },
+    );
+}
+
+#[test]
 fn modal_ownership_precedes_window_shortcuts() {
     crate::test_support::gtk_test(
         "ui::window::tests::keyboard_dispatch::modal_ownership_precedes_window_shortcuts",

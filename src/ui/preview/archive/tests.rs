@@ -275,6 +275,60 @@ fn moving_the_cursor_clamps_at_the_ends_and_tracks_the_highlight() {
 }
 
 #[test]
+fn pointer_selection_is_adopted_before_keyboard_moves() {
+    crate::test_support::gtk_test(
+        "ui::preview::archive::tests::pointer_selection_is_adopted_before_keyboard_moves",
+        || {
+            let browser = ArchiveBrowser::new(tree(), std::rc::Rc::new(|_| {}));
+            // A pointer click changes the selection model without touching
+            // the keyboard cursor.
+            browser.selection.set_selected(1);
+            assert_eq!(browser.selected_index(), Some(1));
+            assert_eq!(browser.cursor_index(), 0);
+            // Down from the last row is clamped: no movement, no snap-back.
+            assert!(!browser.move_cursor(1));
+            assert_eq!(browser.selected_index(), Some(1));
+            assert_eq!(browser.cursor_index(), 1);
+            // Up then steps back to the first row.
+            assert!(browser.move_cursor(-1));
+            assert_eq!(browser.selected_index(), Some(0));
+        },
+    );
+}
+
+#[test]
+fn enter_after_pointer_selection_opens_the_visible_row() {
+    crate::test_support::gtk_test(
+        "ui::preview::archive::tests::enter_after_pointer_selection_opens_the_visible_row",
+        || {
+            let mut browser = ArchiveBrowser::new(tree(), std::rc::Rc::new(|_| {}));
+            // The pointer selected the README file; the keyboard cursor is stale.
+            browser.selection.set_selected(1);
+            // Enter must act on the visible file row, not the stale cursor's directory.
+            assert!(!browser.open_cursor());
+            assert_eq!(browser.model.n_items(), 2);
+            assert_eq!(browser.selected_index(), Some(1));
+        },
+    );
+}
+
+#[test]
+fn activating_a_file_syncs_the_cursor() {
+    crate::test_support::gtk_test(
+        "ui::preview::archive::tests::activating_a_file_syncs_the_cursor",
+        || {
+            let mut browser = ArchiveBrowser::new(tree(), std::rc::Rc::new(|_| {}));
+            // Activation selects the README file without touching the cursor.
+            browser.selection.set_selected(1);
+            browser.open_child(1);
+            assert_eq!(browser.cursor_index(), 1);
+            assert_eq!(browser.selected_index(), Some(1));
+            assert!(!browser.move_cursor(1));
+        },
+    );
+}
+
+#[test]
 fn opening_a_directory_enters_it_and_highlights_its_first_child() {
     crate::test_support::gtk_test(
         "ui::preview::archive::tests::opening_a_directory_enters_it_and_highlights_its_first_child",
