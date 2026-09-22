@@ -2465,8 +2465,10 @@ paned > separator {
   background: alpha(@theme_muted, 0.35);
 }
 
-.preview-archive-row:selected {
-  background: alpha(@theme_accent, 0.28);
+.preview-archive-list row:selected {
+  background: alpha(@theme_accent, 0.22);
+  outline: 1px solid @theme_accent;
+  outline-offset: -1px;
 }
 
 .preview-archive-name {
@@ -4370,6 +4372,12 @@ textview > popover.menu button.model:focus-visible {
 .file-list row:focus-within .file-row.filter-result {
   outline: 1px solid @theme_accent;
   outline-offset: -1px;
+}
+
+/* The archive preview shows its own cursor; the listing keeps only the selection fill. */
+.keyboard-navigation.archive-preview .file-list:focus-within .file-row.keyboard-cursor:not(.filter-result),
+.keyboard-navigation.archive-preview .file-list row:focus-within .file-row.filter-result {
+  outline: none;
 }
 
 .directory-column:not(:focus-within) .file-list:not(.context-selection) row:selected,

@@ -575,6 +575,12 @@ impl PreviewDrawer {
         self.state.close();
     }
 
+    /// Navigation keys for a displayed archive. Returns whether the key was
+    /// handled inside the archive tree.
+    pub fn archive_key(&self, key: gtk::gdk::Key) -> bool {
+        self.state.archive_key(key)
+    }
+
     pub fn toggle(&self, entry: Option<FileEntry>, depth: Option<usize>) {
         self.state.toggle(entry, depth);
     }
@@ -1273,6 +1279,7 @@ impl PreviewState {
     }
 
     fn render_archive(self: &Rc<Self>, tree: ArchivePreviewTree) {
+        self.set_archive_preview_active(true);
         let weak = Rc::downgrade(self);
         let navigate = Rc::new(move |depth: usize| {
             if let Some(state) = weak.upgrade() {
@@ -1294,6 +1301,40 @@ impl PreviewState {
     fn navigate_archive(self: &Rc<Self>, depth: usize) {
         if let Some(browser) = self.archive_browser.borrow_mut().as_mut() {
             browser.navigate_to(depth);
+        }
+    }
+
+    /// Routes a navigation key into the archive tree while it is previewed.
+    ///
+    /// Returns `false` when an archive is not displayed, so callers can fall
+    /// back to normal browsing. `Left`/`h` at the root and `Right`/`l`/Enter on
+    /// a file are consumed without extracting or touching the host filesystem.
+    fn archive_key(&self, key: gtk::gdk::Key) -> bool {
+        let mut browsers = self.archive_browser.borrow_mut();
+        let Some(browser) = browsers.as_mut() else {
+            return false;
+        };
+        match key {
+            gtk::gdk::Key::Up => {
+                browser.move_cursor(-1);
+            }
+            gtk::gdk::Key::Down => {
+                browser.move_cursor(1);
+            }
+            gtk::gdk::Key::Left => {
+                browser.go_up();
+            }
+            gtk::gdk::Key::Right | gtk::gdk::Key::Return | gtk::gdk::Key::KP_Enter => {
+                browser.open_cursor();
+            }
+            _ => return false,
+        }
+        true
+    }
+
+    fn set_archive_preview_active(&self, active: bool) {
+        if let Some(browser) = self.sizing.browser() {
+            browser.set_archive_preview_active(active);
         }
     }
 
@@ -1978,6 +2019,7 @@ impl PreviewState {
         self.text_view.take();
         self.text_scroll.take();
         self.archive_browser.take();
+        self.set_archive_preview_active(false);
         self.clear_password_entry();
         clear_box(&self.content);
     }

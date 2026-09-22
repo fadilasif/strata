@@ -6,9 +6,42 @@ mod scroll_zoom;
 use gtk::gdk::{Key, ModifierType};
 
 use super::super::*;
+use crate::services::{
+    ArchiveFileEntry, LoadHandle, Preview, PreviewContent, PreviewEvent, PreviewProvider,
+    PreviewRequest, archive_preview_tree,
+};
 use crate::ui::{
     preview::PreviewDrawer, shortcut_footer::ShortcutFooter, top_bar_navigation::TopBarNavigation,
 };
+
+/// Serves a small archive tree so the archive preview is exercised without a real ZIP.
+struct ArchivePreview;
+
+impl PreviewProvider for ArchivePreview {
+    fn load(&self, request: PreviewRequest, emit: Rc<dyn Fn(PreviewEvent)>) -> LoadHandle {
+        let tree = archive_preview_tree(vec![
+            ArchiveFileEntry {
+                name: "docs/readme.md".to_owned(),
+                directory: false,
+                size: 1,
+            },
+            ArchiveFileEntry {
+                name: "top.txt".to_owned(),
+                directory: false,
+                size: 2,
+            },
+        ]);
+        glib::idle_add_local_once(move || {
+            emit(PreviewEvent::Ready(Preview {
+                request_id: request.id,
+                entry: request.entry,
+                content_type: "application/zip".into(),
+                content: PreviewContent::Archive { tree },
+            }))
+        });
+        LoadHandle::new(|| {})
+    }
+}
 
 struct KeyboardFixture {
     window: gtk::ApplicationWindow,
@@ -98,6 +131,27 @@ impl KeyboardFixture {
             keys,
             _directory: directory,
         }
+    }
+
+    fn with_archive() -> Self {
+        let fixture = Self::with_provider(Rc::new(ArchivePreview));
+        std::fs::write(fixture._directory.path().join("archive.zip"), b"fixture")
+            .expect("archive fixture");
+        fixture.view.refresh();
+        wait_until(|| {
+            fixture
+                .view
+                .browser()
+                .column_snapshot(0)
+                .is_some_and(|column| !column.loading && column.count == 4)
+        });
+        fixture.view.browser().select(0, 1);
+        fixture.view.browser().focus_active();
+        wait_until(|| {
+            fixture.view.item_view_has_focus()
+                && rendered_name(&fixture.view.widget(), "archive.zip")
+        });
+        fixture
     }
 
     fn press(&self, key: Key, modifiers: ModifierType) -> bool {
@@ -194,6 +248,56 @@ fn wait_until(condition: impl Fn() -> bool) {
         glib::MainContext::default().iteration(false);
         std::thread::sleep(Duration::from_millis(2));
     }
+}
+
+#[test]
+fn archive_preview_keys_navigate_the_tree_without_moving_the_listing() {
+    crate::test_support::gtk_test(
+        "ui::window::tests::keyboard_dispatch::archive_preview_keys_navigate_the_tree_without_moving_the_listing",
+        || {
+            let fixture = KeyboardFixture::with_archive();
+            assert!(fixture.press(Key::space, ModifierType::empty()));
+            wait_until(|| {
+                widget_with_class(&fixture.preview.widget(), "preview-archive").is_some()
+            });
+
+            // Arrows and vim aliases route into the archive instead of the listing.
+            for key in [
+                Key::Down,
+                Key::j,
+                Key::Up,
+                Key::k,
+                Key::Right,
+                Key::l,
+                Key::Left,
+                Key::h,
+            ] {
+                assert!(
+                    fixture.press(key, ModifierType::empty()),
+                    "{key:?} should stay inside the archive"
+                );
+            }
+            assert_eq!(fixture.selected(), [1]);
+
+            // Enter on a member file must not extract it or touch the host.
+            assert!(fixture.press(Key::Down, ModifierType::empty()));
+            assert!(fixture.press(Key::Return, ModifierType::empty()));
+            assert!(
+                fixture._directory.path().join("archive.zip").exists(),
+                "archive member activation must not extract"
+            );
+            assert_eq!(fixture.selected(), [1]);
+
+            // Space and Escape still dismiss the preview.
+            assert!(fixture.press(Key::space, ModifierType::empty()));
+            wait_until(|| !fixture.preview.is_open());
+            assert!(fixture.press(Key::space, ModifierType::empty()));
+            wait_until(|| fixture.preview.is_open());
+            assert!(fixture.press(Key::Escape, ModifierType::empty()));
+            wait_until(|| !fixture.preview.is_open());
+            assert_eq!(fixture.selected(), [1]);
+        },
+    );
 }
 
 #[test]
