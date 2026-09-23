@@ -55,8 +55,6 @@ impl Dispatcher {
         (browser.close_peek() || browser.clear_active_selection()).then_some(Propagation::Stop)
     }
 
-    /// While an archive preview is open, plain navigation keys move the cursor
-    /// inside the archive's in-memory tree instead of the listing.
     pub(super) fn archive_navigation(&self, event: &KeyEvent) -> KeyResult {
         if !event.without(
             Modifiers::CONTROL_MASK

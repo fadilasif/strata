@@ -4090,7 +4090,6 @@ textview > popover.menu button.model:focus-visible,
   padding-bottom: 7px;
 }
 
-/* Row fill, radius, and transitions shared with the archive preview rows. */
 .file-list row,
 .file-list-mode row,
 .preview-archive-list row {
@@ -4111,7 +4110,6 @@ textview > popover.menu button.model:focus-visible,
   margin-right: 5px;
 }
 
-/* Keyboard-cursor outline baseline, reused by the archive preview row content. */
 .file-row,
 .list-row,
 .preview-archive-row {
@@ -4451,7 +4449,6 @@ textview > popover.menu button.model:focus-visible,
   outline: none;
 }
 
-/* The archive preview reuses the listing's keyboard-cursor outline. */
 .keyboard-navigation .file-list:focus-within .file-row.keyboard-cursor:not(.filter-result),
 .file-list row:focus-within .file-row.filter-result,
 .preview-archive-list row:selected .preview-archive-row {

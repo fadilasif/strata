@@ -14,7 +14,6 @@ use crate::ui::{
     preview::PreviewDrawer, shortcut_footer::ShortcutFooter, top_bar_navigation::TopBarNavigation,
 };
 
-/// Serves a small archive tree so the archive preview is exercised without a real ZIP.
 struct ArchivePreview;
 
 impl PreviewProvider for ArchivePreview {
@@ -38,6 +37,20 @@ impl PreviewProvider for ArchivePreview {
                 content_type: "application/zip".into(),
                 content: PreviewContent::Archive { tree },
             }))
+        });
+        LoadHandle::new(|| {})
+    }
+}
+
+struct ProtectedArchivePreview;
+
+impl PreviewProvider for ProtectedArchivePreview {
+    fn load(&self, request: PreviewRequest, emit: Rc<dyn Fn(PreviewEvent)>) -> LoadHandle {
+        glib::idle_add_local_once(move || {
+            emit(PreviewEvent::NeedsPassword {
+                request_id: request.id,
+                entry: request.entry,
+            });
         });
         LoadHandle::new(|| {})
     }
@@ -251,6 +264,30 @@ fn wait_until(condition: impl Fn() -> bool) {
 }
 
 #[test]
+fn escape_closes_archive_preview_with_password_focus() {
+    crate::test_support::gtk_test(
+        "ui::window::tests::keyboard_dispatch::escape_closes_archive_preview_with_password_focus",
+        || {
+            let fixture = KeyboardFixture::with_provider(Rc::new(ProtectedArchivePreview));
+            assert!(fixture.press(Key::space, ModifierType::empty()));
+            wait_until(|| {
+                let focus = gtk::prelude::RootExt::focus(&fixture.window);
+                fixture.preview.password_has_focus(focus.as_ref())
+            });
+            let selected = fixture.selected();
+            assert!(fixture.press(Key::Escape, ModifierType::empty()));
+            wait_until(|| !fixture.preview.is_open());
+            assert_eq!(fixture.selected(), selected);
+            assert!(
+                !fixture
+                    .preview
+                    .password_has_focus(gtk::prelude::RootExt::focus(&fixture.window).as_ref())
+            );
+        },
+    );
+}
+
+#[test]
 fn archive_preview_keys_navigate_the_tree_without_moving_the_listing() {
     crate::test_support::gtk_test(
         "ui::window::tests::keyboard_dispatch::archive_preview_keys_navigate_the_tree_without_moving_the_listing",
@@ -261,7 +298,6 @@ fn archive_preview_keys_navigate_the_tree_without_moving_the_listing() {
                 widget_with_class(&fixture.preview.widget(), "preview-archive").is_some()
             });
 
-            // Arrows and vim aliases route into the archive instead of the listing.
             for key in [
                 Key::Down,
                 Key::j,
@@ -279,7 +315,6 @@ fn archive_preview_keys_navigate_the_tree_without_moving_the_listing() {
             }
             assert_eq!(fixture.selected(), [1]);
 
-            // Enter on a member file must not extract it or touch the host.
             assert!(fixture.press(Key::Down, ModifierType::empty()));
             assert!(fixture.press(Key::Return, ModifierType::empty()));
             assert!(
@@ -288,7 +323,6 @@ fn archive_preview_keys_navigate_the_tree_without_moving_the_listing() {
             );
             assert_eq!(fixture.selected(), [1]);
 
-            // Space and Escape still dismiss the preview.
             assert!(fixture.press(Key::space, ModifierType::empty()));
             wait_until(|| !fixture.preview.is_open());
             assert!(fixture.press(Key::space, ModifierType::empty()));
@@ -315,8 +349,6 @@ fn archive_keys_route_when_the_preview_list_has_focus() {
             wait_until(|| list.is_mapped());
             assert!(list.grab_focus());
             assert!(!fixture.view.item_view_has_focus());
-            // Arrows keep driving the tree instead of falling through to the
-            // list's own key handling or the listing.
             assert!(fixture.press(Key::Down, ModifierType::empty()));
             assert_eq!(fixture.selected(), [1]);
             assert!(fixture.press(Key::Up, ModifierType::empty()));

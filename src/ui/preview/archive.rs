@@ -88,8 +88,6 @@ impl ArchiveBrowser {
         root.append(&count);
 
         let model = gtk::gio::ListStore::new::<gtk::StringObject>();
-        // The preview owns its own keyboard cursor, so rows are a single
-        // selectable item rather than an inert listing.
         let selection = gtk::SingleSelection::new(Some(model.clone()));
         selection.set_autoselect(false);
         let factory = gtk::SignalListItemFactory::new();
@@ -207,20 +205,17 @@ impl ArchiveBrowser {
         &self.list
     }
 
-    /// The highlighted child index within the current directory.
     #[cfg(test)]
     pub(super) fn cursor_index(&self) -> usize {
         self.cursor.get()
     }
 
-    /// The highlighted child index, or `None` for an empty directory.
     #[cfg(test)]
     pub(super) fn selected_index(&self) -> Option<usize> {
         let selected = self.selection.selected();
         (selected != gtk::INVALID_LIST_POSITION).then_some(selected as usize)
     }
 
-    /// Moves the cursor one row, clamped to the visible children.
     pub(super) fn move_cursor(&self, delta: isize) -> bool {
         let count = self.model.n_items() as usize;
         if count == 0 {
@@ -237,7 +232,6 @@ impl ArchiveBrowser {
         true
     }
 
-    /// Enters the highlighted directory, leaving files and empty directories untouched.
     pub(super) fn open_cursor(&mut self) -> bool {
         self.sync_cursor_to_selection();
         let directory = directory_at(&self.tree.root, &self.path.borrow());
@@ -251,7 +245,6 @@ impl ArchiveBrowser {
         true
     }
 
-    /// Returns to the parent directory, highlighting the child that was left.
     pub(super) fn go_up(&mut self) -> bool {
         let depth = self.path.borrow().len();
         if depth == 0 {
@@ -272,8 +265,6 @@ impl ArchiveBrowser {
             self.cursor.set(0);
             self.refresh();
         } else {
-            // Activation implies the row is selected; adopt it so the next
-            // keyboard step continues from here instead of a stale cursor.
             self.sync_cursor_to_selection();
         }
     }
@@ -281,8 +272,6 @@ impl ArchiveBrowser {
     pub(super) fn navigate_to(&mut self, depth: usize) {
         let current = self.path.borrow().clone();
         let depth = depth.min(current.len());
-        // Jumping up highlights the directory that was left, matching the
-        // listing behavior when returning to a parent.
         self.cursor.set(if depth < current.len() {
             current[depth]
         } else {
@@ -379,9 +368,6 @@ impl ArchiveBrowser {
         self.list.scroll_to(index, gtk::ListScrollFlags::NONE, None);
     }
 
-    /// The selection model is user-mutable (pointer clicks, native list
-    /// keys), so adopt it before keyboard steps; otherwise the first key
-    /// after pointer use is a no-op or jumps backward.
     fn sync_cursor_to_selection(&self) {
         let selected = self.selection.selected();
         if selected == gtk::INVALID_LIST_POSITION {

@@ -575,15 +575,22 @@ impl PreviewDrawer {
         self.state.close();
     }
 
-    /// Navigation keys for a displayed archive. Returns whether the key was
-    /// handled inside the archive tree.
+    pub(in crate::ui) fn password_has_focus(&self, focused: Option<&gtk::Widget>) -> bool {
+        self.state
+            .password_entry
+            .borrow()
+            .as_ref()
+            .is_some_and(|entry| {
+                focused.is_some_and(|focus| {
+                    focus == entry.upcast_ref::<gtk::Widget>() || focus.is_ancestor(entry)
+                })
+            })
+    }
+
     pub fn archive_key(&self, key: gtk::gdk::Key) -> bool {
         self.state.archive_key(key)
     }
 
-    /// Whether keyboard focus sits inside the archive tree list, so its
-    /// arrows keep routing there instead of falling through to the list's
-    /// own key handling.
     pub fn archive_list_has_focus(&self, focused: Option<&gtk::Widget>) -> bool {
         self.state.archive_list_has_focus(focused)
     }
@@ -1311,11 +1318,6 @@ impl PreviewState {
         }
     }
 
-    /// Routes a navigation key into the archive tree while it is previewed.
-    ///
-    /// Returns `false` when an archive is not displayed, so callers can fall
-    /// back to normal browsing. `Left`/`h` at the root and `Right`/`l`/Enter on
-    /// a file are consumed without extracting or touching the host filesystem.
     fn archive_key(&self, key: gtk::gdk::Key) -> bool {
         let mut browsers = self.archive_browser.borrow_mut();
         let Some(browser) = browsers.as_mut() else {

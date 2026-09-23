@@ -383,7 +383,6 @@ fn archive_keys_route_into_the_preview_tree() {
         assert!(drawer.archive_key(gtk::gdk::Key::Up));
         assert_eq!(selected(&drawer), Some(0));
 
-        // Left at the root and Right on the highlighted directory are consumed.
         assert!(drawer.archive_key(gtk::gdk::Key::Left));
         assert_eq!(selected(&drawer), Some(0));
         assert!(drawer.archive_key(gtk::gdk::Key::Right));

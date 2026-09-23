@@ -274,6 +274,19 @@ impl Dispatcher {
                     None
                 }
             })
+            .or_else(|| {
+                if event.key == Key::Escape
+                    && event.without(
+                        Modifiers::CONTROL_MASK | Modifiers::ALT_MASK | Modifiers::SUPER_MASK,
+                    )
+                    && self.preview.password_has_focus(event.focused.as_ref())
+                {
+                    self.preview.close();
+                    Some(Propagation::Stop)
+                } else {
+                    None
+                }
+            })
             .or_else(|| self.text_input(&event))
             .or_else(|| self.file_commands(browser, &event))
             .or_else(|| self.archive_navigation(&event))

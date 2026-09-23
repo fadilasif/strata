@@ -280,16 +280,12 @@ fn pointer_selection_is_adopted_before_keyboard_moves() {
         "ui::preview::archive::tests::pointer_selection_is_adopted_before_keyboard_moves",
         || {
             let browser = ArchiveBrowser::new(tree(), std::rc::Rc::new(|_| {}));
-            // A pointer click changes the selection model without touching
-            // the keyboard cursor.
             browser.selection.set_selected(1);
             assert_eq!(browser.selected_index(), Some(1));
             assert_eq!(browser.cursor_index(), 0);
-            // Down from the last row is clamped: no movement, no snap-back.
             assert!(!browser.move_cursor(1));
             assert_eq!(browser.selected_index(), Some(1));
             assert_eq!(browser.cursor_index(), 1);
-            // Up then steps back to the first row.
             assert!(browser.move_cursor(-1));
             assert_eq!(browser.selected_index(), Some(0));
         },
@@ -302,9 +298,7 @@ fn enter_after_pointer_selection_opens_the_visible_row() {
         "ui::preview::archive::tests::enter_after_pointer_selection_opens_the_visible_row",
         || {
             let mut browser = ArchiveBrowser::new(tree(), std::rc::Rc::new(|_| {}));
-            // The pointer selected the README file; the keyboard cursor is stale.
             browser.selection.set_selected(1);
-            // Enter must act on the visible file row, not the stale cursor's directory.
             assert!(!browser.open_cursor());
             assert_eq!(browser.model.n_items(), 2);
             assert_eq!(browser.selected_index(), Some(1));
@@ -318,7 +312,6 @@ fn activating_a_file_syncs_the_cursor() {
         "ui::preview::archive::tests::activating_a_file_syncs_the_cursor",
         || {
             let mut browser = ArchiveBrowser::new(tree(), std::rc::Rc::new(|_| {}));
-            // Activation selects the README file without touching the cursor.
             browser.selection.set_selected(1);
             browser.open_child(1);
             assert_eq!(browser.cursor_index(), 1);
@@ -427,7 +420,6 @@ fn breadcrumb_jumps_highlight_the_child_that_was_left() {
             let mut browser = ArchiveBrowser::new(tree, std::rc::Rc::new(|_| {}));
             let src = dir_index(&browser.tree.root, "src");
             assert_ne!(src, 0);
-            // Descend root -> src -> mod, then jump the breadcrumb back to src.
             browser.open_child(src);
             browser.open_cursor();
             browser.navigate_to(1);

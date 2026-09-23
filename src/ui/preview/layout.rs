@@ -45,7 +45,6 @@ impl SplitSizing {
         self.compact.get()
     }
 
-    /// The attached browser, when the preview split has one.
     pub(super) fn browser(&self) -> Option<BrowserView> {
         self.binding
             .borrow()

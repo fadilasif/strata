@@ -1307,9 +1307,6 @@ impl BrowserView {
         }
     }
 
-    /// Marks the listing while an archive preview owns the keyboard cursor, so
-    /// its rows keep their selection fill without duplicating the cursor
-    /// outline now shown inside the preview.
     pub(in crate::ui) fn set_archive_preview_active(&self, active: bool) {
         if active {
             self.state.overlay.add_css_class("archive-preview");
