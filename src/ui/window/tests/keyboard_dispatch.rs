@@ -278,6 +278,7 @@ fn escape_closes_archive_preview_with_password_focus() {
             assert!(fixture.press(Key::Escape, ModifierType::empty()));
             wait_until(|| !fixture.preview.is_open());
             assert_eq!(fixture.selected(), selected);
+            wait_until(|| fixture.view.item_view_has_focus());
             assert!(
                 !fixture
                     .preview
@@ -356,6 +357,7 @@ fn archive_keys_route_when_the_preview_list_has_focus() {
             assert!(fixture.press(Key::Escape, ModifierType::empty()));
             wait_until(|| !fixture.preview.is_open());
             assert_eq!(fixture.selected(), [1]);
+            wait_until(|| fixture.view.item_view_has_focus());
         },
     );
 }

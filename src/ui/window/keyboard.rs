@@ -281,8 +281,7 @@ impl Dispatcher {
                     )
                     && self.preview.password_has_focus(event.focused.as_ref())
                 {
-                    self.preview.close();
-                    Some(Propagation::Stop)
+                    self.dismiss_preview_or_selection(browser)
                 } else {
                     None
                 }

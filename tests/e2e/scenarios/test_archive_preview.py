@@ -42,7 +42,7 @@ def test_archive_password_retry_crosses_the_real_sandbox(strata, fixture_tree):
     strata.keyboard.type_text("dismiss-this-password")
     strata.keyboard.press("Escape")
     strata.wait(lambda: strata.preview() is None, "Escape to close the password prompt")
-    strata.select_entry(filename)
+    strata.wait_for_focused_entry(filename)
     strata.keyboard.press("space")
     strata.wait(
         lambda: strata.preview() and strata.preview().find(states={"editable", "focused"}),

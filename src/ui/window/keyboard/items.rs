@@ -46,9 +46,10 @@ impl Dispatcher {
         None
     }
 
-    fn dismiss_preview_or_selection(&self, browser: &Browser) -> KeyResult {
+    pub(super) fn dismiss_preview_or_selection(&self, browser: &Browser) -> KeyResult {
         if self.preview.is_enabled() {
             self.preview.close();
+            browser.focus_active();
             return Some(Propagation::Stop);
         }
         // Transient surfaces may return focus to pane chrome rather than an item.
