@@ -163,6 +163,9 @@ struct PreviewState {
     /// One-shot: an explicit toggle is opening, so the next archive render
     /// takes keyboard focus into the tree. Implicit loads must never steal it.
     focus_archive_on_ready: Cell<bool>,
+    /// The request the one-shot above belongs to. A stale arm can never
+    /// claim focus for a later, unrelated load.
+    focus_archive_request: Cell<Option<PreviewRequestId>>,
     enabled_action: gio::SimpleAction,
     animating: Cell<bool>,
     animation_generation: Rc<Cell<u64>>,
@@ -324,6 +327,7 @@ impl PreviewDrawer {
             current_request: Cell::new(None),
             next_request: Cell::new(1),
             focus_archive_on_ready: Cell::new(false),
+            focus_archive_request: Cell::new(None),
             enabled_action: gio::SimpleAction::new_stateful(
                 "preview-panel",
                 None,
@@ -1053,6 +1057,11 @@ impl PreviewState {
         self.next_request
             .set(self.next_request.get().saturating_add(1));
         self.current_request.set(Some(request_id));
+        // Bind a pending explicit-open claim to exactly this load; any later,
+        // unrelated render observes a different id and takes nothing.
+        if self.focus_archive_on_ready.replace(false) {
+            self.focus_archive_request.set(Some(request_id));
+        }
         self.show_loading(request_id);
         let weak = Rc::downgrade(self);
         let emit = Rc::new(move |event| {
@@ -1317,7 +1326,12 @@ impl PreviewState {
                 self.render_pdf_viewer(preview.entry, png, page, pages);
             }
             PreviewContent::Archive { tree } => {
-                self.render_archive(tree);
+                // Only an explicit toggle claims focus, and only once for its
+                // own load: implicit reloads must leave it wherever the user
+                // put it.
+                let focus = self.focus_archive_request.get() == Some(preview.request_id);
+                self.focus_archive_request.set(None);
+                self.render_archive(tree, focus);
             }
             PreviewContent::Unsupported => {
                 self.show_message(
@@ -1328,7 +1342,7 @@ impl PreviewState {
         }
     }
 
-    fn render_archive(self: &Rc<Self>, tree: ArchivePreviewTree) {
+    fn render_archive(self: &Rc<Self>, tree: ArchivePreviewTree, focus_tree: bool) {
         self.set_archive_preview_active(true);
         let weak = Rc::downgrade(self);
         let navigate = Rc::new(move |depth: usize| {
@@ -1346,9 +1360,7 @@ impl PreviewState {
             }
         });
         self.archive_browser.replace(Some(browser));
-        // Only an explicit toggle claims focus, and only once: implicit
-        // reloads must leave it wherever the user put it.
-        if self.focus_archive_on_ready.replace(false) {
+        if focus_tree {
             list.grab_focus();
         }
     }

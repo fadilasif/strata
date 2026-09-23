@@ -366,7 +366,7 @@ fn archive_keys_route_into_the_preview_tree() {
                 size: 1,
             },
         ]);
-        drawer.state.render_archive(tree);
+        drawer.state.render_archive(tree, false);
         let selected = |drawer: &PreviewDrawer| {
             drawer
                 .state
