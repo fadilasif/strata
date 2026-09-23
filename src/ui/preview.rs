@@ -1171,6 +1171,10 @@ impl PreviewState {
                         .map(|entry| entry.text().to_string())
                         .unwrap_or_default(),
                 );
+                // Unlocking continues the explicit open: carry the tree-focus
+                // claim over to the retry load, whose fresh request id would
+                // otherwise orphan it and leave focus on a destroyed entry.
+                state.focus_archive_on_ready.set(true);
                 state.load_with_password(unlock_entry.clone(), 0, Some(password));
             }
         });
@@ -1179,6 +1183,7 @@ impl PreviewState {
         password.connect_activate(move |entry| {
             if let Some(state) = weak.upgrade() {
                 let password = SecretString::new(entry.text().to_string());
+                state.focus_archive_on_ready.set(true);
                 state.load_with_password(activate_entry.clone(), 0, Some(password));
             }
         });
