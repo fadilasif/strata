@@ -160,6 +160,9 @@ struct PreviewState {
     print_request: Cell<Option<PreviewRequestId>>,
     current_request: Cell<Option<PreviewRequestId>>,
     next_request: Cell<u64>,
+    /// One-shot: an explicit toggle is opening, so the next archive render
+    /// takes keyboard focus into the tree. Implicit loads must never steal it.
+    focus_archive_on_ready: Cell<bool>,
     enabled_action: gio::SimpleAction,
     animating: Cell<bool>,
     animation_generation: Rc<Cell<u64>>,
@@ -320,6 +323,7 @@ impl PreviewDrawer {
             print_request: Cell::new(None),
             current_request: Cell::new(None),
             next_request: Cell::new(1),
+            focus_archive_on_ready: Cell::new(false),
             enabled_action: gio::SimpleAction::new_stateful(
                 "preview-panel",
                 None,
@@ -591,6 +595,12 @@ impl PreviewDrawer {
         self.state.archive_key(key)
     }
 
+    /// Closes a displayed archive preview, if any. Space reaches the tree
+    /// instead of the listing while it owns keyboard focus.
+    pub fn close_archive(&self) -> bool {
+        self.state.close_archive()
+    }
+
     pub fn archive_list_has_focus(&self, focused: Option<&gtk::Widget>) -> bool {
         self.state.archive_list_has_focus(focused)
     }
@@ -626,6 +636,9 @@ impl PreviewState {
             self.show(entry, depth);
             return;
         }
+        // An implicit follow supersedes any explicit open: the user is
+        // driving the listing, so the tree must not claim focus on render.
+        self.focus_archive_on_ready.set(false);
         self.current_request.set(None);
         self.load.borrow_mut().take();
         self.pdf_loads.borrow_mut().clear();
@@ -687,8 +700,31 @@ impl PreviewState {
     }
 
     fn close(self: &Rc<Self>) {
+        // The tree owns keyboard focus while open; park it somewhere live on
+        // close so Space can reopen and arrows keep working. Other previews
+        // never move focus, so leave it alone there.
+        let tree_focused = self
+            .archive_browser
+            .borrow()
+            .as_ref()
+            .is_some_and(|browser| {
+                self.pane
+                    .root()
+                    .and_then(|root| root.focus())
+                    .is_some_and(|focused| {
+                        browser.root().upcast_ref::<gtk::Widget>() == &focused
+                            || focused.is_ancestor(browser.root())
+                    })
+            });
         self.stop();
         self.pane.set_size_request(MIN_WIDTH, -1);
+        if tree_focused {
+            if self.sizing.is_compact() {
+                self.close_button.grab_focus();
+            } else if let Some(browser) = self.sizing.browser() {
+                browser.browser().focus_active();
+            }
+        }
     }
 
     fn print(self: &Rc<Self>) {
@@ -1310,6 +1346,11 @@ impl PreviewState {
             }
         });
         self.archive_browser.replace(Some(browser));
+        // Only an explicit toggle claims focus, and only once: implicit
+        // reloads must leave it wherever the user put it.
+        if self.focus_archive_on_ready.replace(false) {
+            list.grab_focus();
+        }
     }
 
     fn navigate_archive(self: &Rc<Self>, depth: usize) {
@@ -1357,6 +1398,15 @@ impl PreviewState {
                         || focused.is_ancestor(browser.list())
                 })
             })
+    }
+
+    fn close_archive(self: &Rc<Self>) -> bool {
+        if self.archive_browser.borrow().is_some() {
+            self.close();
+            true
+        } else {
+            false
+        }
     }
 
     fn open_archive_row(self: &Rc<Self>, position: u32) {
