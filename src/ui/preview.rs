@@ -1183,6 +1183,7 @@ impl PreviewState {
         password.connect_activate(move |entry| {
             if let Some(state) = weak.upgrade() {
                 let password = SecretString::new(entry.text().to_string());
+                // Same carry-over as the Unlock button above.
                 state.focus_archive_on_ready.set(true);
                 state.load_with_password(activate_entry.clone(), 0, Some(password));
             }
