@@ -37,8 +37,6 @@ impl PreviewState {
             self.close();
         } else {
             self.set_enabled(true);
-            // An explicit toggle owns the open: the archive tree takes
-            // keyboard focus when it renders, in every layout.
             self.focus_archive_on_ready.set(true);
             if let Some(entry) = entry.and_then(|entry| preview_target(Some(entry))) {
                 self.show(entry, depth);

@@ -184,7 +184,6 @@ fn compact_archive_open_focuses_the_tree_instead_of_the_close_button() {
             fixture.settle();
             assert!(fixture.preview.is_open());
             assert!(fixture.preview.state.sizing.is_compact());
-            // Compact parks focus on the close button while the tree loads.
             wait_until(|| fixture.preview.state.close_button.has_focus());
             let request = fixture
                 .requests
@@ -215,8 +214,6 @@ fn compact_archive_open_focuses_the_tree_instead_of_the_close_button() {
                 }),
             );
             fixture.settle();
-            // The rendered tree takes keyboard focus with its first entry
-            // highlighted; the listing keeps the archive selected.
             let tree =
                 find(&fixture.preview.widget(), "preview-archive-list").expect("archive tree");
             let focused = RootExt::focus(&fixture.window).expect("window focus");

@@ -160,11 +160,8 @@ struct PreviewState {
     print_request: Cell<Option<PreviewRequestId>>,
     current_request: Cell<Option<PreviewRequestId>>,
     next_request: Cell<u64>,
-    /// One-shot: an explicit toggle is opening, so the next archive render
-    /// takes keyboard focus into the tree. Implicit loads must never steal it.
+    // Only explicit opens claim keyboard focus; implicit preview updates must not steal it.
     focus_archive_on_ready: Cell<bool>,
-    /// The request the one-shot above belongs to. A stale arm can never
-    /// claim focus for a later, unrelated load.
     focus_archive_request: Cell<Option<PreviewRequestId>>,
     enabled_action: gio::SimpleAction,
     animating: Cell<bool>,
@@ -599,8 +596,6 @@ impl PreviewDrawer {
         self.state.archive_key(key)
     }
 
-    /// Closes a displayed archive preview, if any. Space reaches the tree
-    /// instead of the listing while it owns keyboard focus.
     pub fn close_archive(&self) -> bool {
         self.state.close_archive()
     }
@@ -640,8 +635,6 @@ impl PreviewState {
             self.show(entry, depth);
             return;
         }
-        // An implicit follow supersedes any explicit open: the user is
-        // driving the listing, so the tree must not claim focus on render.
         self.focus_archive_on_ready.set(false);
         self.current_request.set(None);
         self.load.borrow_mut().take();
@@ -704,9 +697,6 @@ impl PreviewState {
     }
 
     fn close(self: &Rc<Self>) {
-        // The tree owns keyboard focus while open; park it somewhere live on
-        // close so Space can reopen and arrows keep working. Other previews
-        // never move focus, so leave it alone there.
         let tree_focused = self
             .archive_browser
             .borrow()
@@ -1057,8 +1047,6 @@ impl PreviewState {
         self.next_request
             .set(self.next_request.get().saturating_add(1));
         self.current_request.set(Some(request_id));
-        // Bind a pending explicit-open claim to exactly this load; any later,
-        // unrelated render observes a different id and takes nothing.
         if self.focus_archive_on_ready.replace(false) {
             self.focus_archive_request.set(Some(request_id));
         }
@@ -1171,9 +1159,6 @@ impl PreviewState {
                         .map(|entry| entry.text().to_string())
                         .unwrap_or_default(),
                 );
-                // Unlocking continues the explicit open: carry the tree-focus
-                // claim over to the retry load, whose fresh request id would
-                // otherwise orphan it and leave focus on a destroyed entry.
                 state.focus_archive_on_ready.set(true);
                 state.load_with_password(unlock_entry.clone(), 0, Some(password));
             }
@@ -1183,7 +1168,6 @@ impl PreviewState {
         password.connect_activate(move |entry| {
             if let Some(state) = weak.upgrade() {
                 let password = SecretString::new(entry.text().to_string());
-                // Same carry-over as the Unlock button above.
                 state.focus_archive_on_ready.set(true);
                 state.load_with_password(activate_entry.clone(), 0, Some(password));
             }
@@ -1332,9 +1316,6 @@ impl PreviewState {
                 self.render_pdf_viewer(preview.entry, png, page, pages);
             }
             PreviewContent::Archive { tree } => {
-                // Only an explicit toggle claims focus, and only once for its
-                // own load: implicit reloads must leave it wherever the user
-                // put it.
                 let focus = self.focus_archive_request.get() == Some(preview.request_id);
                 self.focus_archive_request.set(None);
                 self.render_archive(tree, focus);

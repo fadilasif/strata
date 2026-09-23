@@ -282,9 +282,7 @@ impl ArchiveBrowser {
     }
 
     fn refresh(&self) {
-        // A rebuild drops recycled rows; if one had keyboard focus, the
-        // window keeps the detached widget, so restore focus to the list
-        // exactly like the listing does after its own rebuilds.
+        // Replacing rows can leave focus on a detached widget.
         let had_focus = self.tree_has_focus();
         self.rebuild_crumbs();
         let directory = directory_at(&self.tree.root, &self.path.borrow());
@@ -386,8 +384,6 @@ impl ArchiveBrowser {
         }
     }
 
-    /// Whether keyboard focus currently sits inside the tree list or one of
-    /// its rows.
     fn tree_has_focus(&self) -> bool {
         self.list
             .root()

@@ -4449,8 +4449,7 @@ textview > popover.menu button.model:focus-visible,
   color: @theme_text;
 }
 
-/* The tree renders its own cursor from selection; a ListView focus ring
-   would linger on stale rows beside it. */
+/* Archive selection already draws a cursor; suppress GTK's second focus ring. */
 .file-list row:focus-visible,
 .file-list-mode row:focus-visible,
 .preview-archive-list row:focus-visible {

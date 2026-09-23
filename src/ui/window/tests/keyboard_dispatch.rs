@@ -326,8 +326,7 @@ fn archive_preview_keys_navigate_the_tree_without_moving_the_listing() {
 
             assert!(fixture.press(Key::space, ModifierType::empty()));
             wait_until(|| !fixture.preview.is_open());
-            // Production hands focus back to the listing on close through the
-            // split binding, which this fixture does not wire up.
+            // This fixture lacks the split binding that restores listing focus on close.
             fixture.view.browser().focus_active();
             assert!(fixture.press(Key::space, ModifierType::empty()));
             wait_until(|| fixture.preview.is_open());
@@ -375,7 +374,6 @@ fn space_opening_archive_focuses_the_tree_first_entry() {
             wait_until(|| {
                 widget_with_class(&fixture.preview.widget(), "preview-archive").is_some()
             });
-            // The tree takes keyboard focus immediately with its first entry highlighted.
             let list = widget_with_class(&fixture.preview.widget(), "preview-archive-list")
                 .expect("archive list");
             wait_until(|| list.is_mapped());
@@ -385,7 +383,6 @@ fn space_opening_archive_focuses_the_tree_first_entry() {
                 "archive tree must own keyboard focus, got {focused:?}"
             );
             assert_eq!(fixture.selected(), [1]);
-            // Arrows drive the tree; the listing selection does not move.
             assert!(fixture.press(Key::Down, ModifierType::empty()));
             assert_eq!(fixture.selected(), [1]);
             assert!(fixture.press(Key::Up, ModifierType::empty()));

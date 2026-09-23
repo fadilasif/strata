@@ -508,9 +508,6 @@ fn archive_unlock_retry_focuses_the_tree_first_entry() {
                 },
             }),
         );
-        // The retry load carries the explicit open's focus claim: the tree
-        // owns keyboard focus with its first entry highlighted instead of
-        // leaving focus on the destroyed password entry.
         let root: gtk::Widget = {
             let archive = drawer.state.archive_browser.borrow();
             let tree = archive.as_ref().expect("archive browser");
