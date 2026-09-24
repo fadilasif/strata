@@ -64,6 +64,25 @@ pub fn modified_date(entry: &FileEntry) -> String {
     modified_date_for_seconds(seconds)
 }
 
+/// Full absolute timestamp for metadata views, independent of the Relative
+/// Time display preference: date, time, and year, e.g. "Sep 24, 2026, 10:42 PM".
+pub fn modified_date_full(entry: &FileEntry) -> String {
+    let MetadataValue::Known(seconds) = entry.modified_unix_seconds else {
+        return "—".to_owned();
+    };
+    let Some(modified) = glib::DateTime::from_unix_local(seconds).ok() else {
+        return "—".to_owned();
+    };
+    format_full_timestamp(&modified)
+}
+
+pub(crate) fn format_full_timestamp(datetime: &glib::DateTime) -> String {
+    datetime
+        .format("%b %-d, %Y, %-I:%M %p")
+        .map(|s| s.to_string())
+        .unwrap_or_else(|_| "—".to_owned())
+}
+
 pub fn set_modified_date(label: &gtk::Label, entry: Option<&FileEntry>, fallback: &str) {
     let seconds = entry.and_then(|entry| match entry.modified_unix_seconds {
         MetadataValue::Known(seconds) => Some(seconds),
@@ -203,6 +222,16 @@ fn calendar_day_difference(modified: &glib::DateTime, now: &glib::DateTime) -> O
 }
 
 fn modified_date_at(modified: &glib::DateTime, now: &glib::DateTime, format: DateFormat) -> String {
+    // Render every calendar-dependent value in one zone: the entry converted
+    // into now's timezone via glib, so local midnights, weekday names, and
+    // absolute dates are correct for any IANA offset (including half- and
+    // quarter-hour zones) without manual offset arithmetic.
+    let converted = modified.to_timezone(&now.timezone());
+    // to_timezone() only fails on null arguments (impossible here: both
+    // zones come from live DateTimes) or allocation failure (which aborts),
+    // so this fallback never triggers in practice; keep the entry's own
+    // zone rather than panicking.
+    let modified = converted.as_ref().unwrap_or(modified);
     let absolute = |format: DateFormat| {
         modified
             .format(format.absolute_pattern())
@@ -219,32 +248,41 @@ fn modified_date_at(modified: &glib::DateTime, now: &glib::DateTime, format: Dat
         return absolute(DateFormat::Relative);
     }
 
-    // Preserve sub-hour recency across midnight.
-    let minutes = span / 60_000_000;
-    if minutes < 60 {
-        return if minutes >= 1 {
-            format!("{minutes}m ago")
-        } else {
-            "just now".to_owned()
-        };
+    // Compact relative units with no seconds: sub-hour recency is always
+    // elapsed time, even across midnight.
+    let seconds = span / 1_000_000;
+    if seconds < 60 {
+        return "Just now".to_owned();
     }
-
+    let minutes = seconds / 60;
+    if minutes < 60 {
+        return format!("{minutes}m ago");
+    }
+    // Elapsed hours rule the first day: weekday names only begin once a full
+    // 24 hours have passed, even across midnight.
+    let hours = span / 3_600_000_000;
+    if hours < 24 {
+        return format!("{hours}h ago");
+    }
+    // Beyond that, calendar days decide so weekdays and weeks stay correct
+    // regardless of time of day.
     let day_diff = calendar_day_difference(modified, now).unwrap_or(span / 86_400_000_000);
-    let same_year = now.year() == modified.year();
-
     if day_diff == 0 {
-        format!("{}h ago", span / 3_600_000_000)
-    } else if day_diff == 1 {
+        // Residual case: more than 23 hours elapsed inside one local calendar
+        // day, possible only on long DST days (e.g. a 25-hour fall-back day).
+        // Clamp to the top of the hours band rather than emitting "24h ago"
+        // or higher, and never fall through to the weekday branch while still
+        // inside the same local calendar day.
+        return format!("{}h ago", hours.min(23));
+    }
+    if day_diff <= 6 {
         modified
-            .format("%H:%M")
-            .map(|s| format!("Yesterday, {}", s))
-            .unwrap_or_else(|_| "—".to_owned())
-    } else if day_diff < 7 {
-        modified
-            .format("%A %H:%M")
+            .format("%a")
             .map(|s| s.to_string())
             .unwrap_or_else(|_| "—".to_owned())
-    } else if same_year {
+    } else if day_diff <= 30 {
+        format!("{}w ago", day_diff / 7)
+    } else if now.year() == modified.year() {
         modified
             .format("%b %-d, %H:%M")
             .map(|s| s.to_string())
