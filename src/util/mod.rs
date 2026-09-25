@@ -39,9 +39,16 @@ impl DateFormat {
     }
 }
 
+#[derive(Clone, Copy)]
+enum DateDisplay {
+    Preferred,
+    Full,
+}
+
 struct ModifiedDateBinding {
     label: glib::WeakRef<gtk::Label>,
     seconds: i64,
+    display: DateDisplay,
 }
 
 thread_local! {
@@ -61,26 +68,12 @@ pub fn modified_date(entry: &FileEntry) -> String {
     let MetadataValue::Known(seconds) = entry.modified_unix_seconds else {
         return "—".to_owned();
     };
-    modified_date_for_seconds(seconds)
+    modified_date_for_seconds(seconds, DateDisplay::Preferred)
 }
 
-/// Full absolute timestamp for metadata views, independent of the Relative
-/// Time display preference: date, time, and year, e.g. "Sep 24, 2026, 10:42 PM".
-pub fn modified_date_full(entry: &FileEntry) -> String {
-    let MetadataValue::Known(seconds) = entry.modified_unix_seconds else {
-        return "—".to_owned();
-    };
-    let Some(modified) = glib::DateTime::from_unix_local(seconds).ok() else {
-        return "—".to_owned();
-    };
-    format_full_timestamp(&modified)
-}
-
-pub(crate) fn format_full_timestamp(datetime: &glib::DateTime) -> String {
-    datetime
-        .format("%b %-d, %Y, %-I:%M %p")
-        .map(|s| s.to_string())
-        .unwrap_or_else(|_| "—".to_owned())
+/// Bind an absolute local timestamp, preserving the saved ISO/Long format.
+pub(crate) fn set_full_modified_date(label: &gtk::Label, seconds: Option<i64>) {
+    bind_modified_date(label, seconds, "—", DateDisplay::Full);
 }
 
 pub fn set_modified_date(label: &gtk::Label, entry: Option<&FileEntry>, fallback: &str) {
@@ -88,10 +81,18 @@ pub fn set_modified_date(label: &gtk::Label, entry: Option<&FileEntry>, fallback
         MetadataValue::Known(seconds) => Some(seconds),
         MetadataValue::Unknown | MetadataValue::Unavailable => None,
     });
-    let text = match (entry, seconds) {
-        (Some(entry), Some(_)) => modified_date(entry),
-        _ => fallback.to_owned(),
-    };
+    bind_modified_date(label, seconds, fallback, DateDisplay::Preferred);
+}
+
+fn bind_modified_date(
+    label: &gtk::Label,
+    seconds: Option<i64>,
+    fallback: &str,
+    display: DateDisplay,
+) {
+    let text = seconds
+        .map(|seconds| modified_date_for_seconds(seconds, display))
+        .unwrap_or_else(|| fallback.to_owned());
     label.set_text(&text);
 
     MODIFIED_DATE_BINDINGS.with_borrow_mut(|bindings| {
@@ -105,6 +106,7 @@ pub fn set_modified_date(label: &gtk::Label, entry: Option<&FileEntry>, fallback
             bindings.push(ModifiedDateBinding {
                 label: label.downgrade(),
                 seconds,
+                display,
             });
         }
     });
@@ -138,17 +140,17 @@ fn bind_date_format(label: &gtk::Label) {
             let Some(label) = widget.downcast_ref::<gtk::Label>() else {
                 return;
             };
-            let seconds = MODIFIED_DATE_BINDINGS.with_borrow(|bindings| {
+            let value = MODIFIED_DATE_BINDINGS.with_borrow(|bindings| {
                 bindings.iter().find_map(|binding| {
                     binding
                         .label
                         .upgrade()
                         .is_some_and(|bound| bound == *label)
-                        .then_some(binding.seconds)
+                        .then_some((binding.seconds, binding.display))
                 })
             });
-            if let Some(seconds) = seconds {
-                label.set_text(&modified_date_for_seconds(seconds));
+            if let Some((seconds, display)) = value {
+                label.set_text(&modified_date_for_seconds(seconds, display));
             }
         },
     );
@@ -164,11 +166,21 @@ pub fn modified_date_example(format: DateFormat) -> String {
     modified_date_at(&sample, &now, format)
 }
 
-fn modified_date_for_seconds(seconds: i64) -> String {
+fn modified_date_for_seconds(seconds: i64, display: DateDisplay) -> String {
     let format = MODIFIED_DATE_FORMAT.with(Cell::get);
     let Some(modified) = glib::DateTime::from_unix_local(seconds).ok() else {
         return "—".to_owned();
     };
+    if matches!(display, DateDisplay::Full) {
+        let pattern = match format {
+            DateFormat::Relative => "%b %-d, %Y, %-I:%M %p",
+            _ => format.absolute_pattern(),
+        };
+        return modified
+            .format(pattern)
+            .map(|s| s.to_string())
+            .unwrap_or_else(|_| "—".to_owned());
+    }
     let Some(now) = glib::DateTime::now_local().ok() else {
         return modified
             .format(format.absolute_pattern())
@@ -194,12 +206,12 @@ fn ensure_modified_date_timer() {
                     binding
                         .label
                         .upgrade()
-                        .map(|label| (label, binding.seconds))
+                        .map(|label| (label, binding.seconds, binding.display))
                 })
                 .collect::<Vec<_>>()
         });
-        for (label, seconds) in &live_bindings {
-            label.set_text(&modified_date_for_seconds(*seconds));
+        for (label, seconds, display) in &live_bindings {
+            label.set_text(&modified_date_for_seconds(*seconds, *display));
         }
 
         if live_bindings.is_empty() {
@@ -222,15 +234,8 @@ fn calendar_day_difference(modified: &glib::DateTime, now: &glib::DateTime) -> O
 }
 
 fn modified_date_at(modified: &glib::DateTime, now: &glib::DateTime, format: DateFormat) -> String {
-    // Render every calendar-dependent value in one zone: the entry converted
-    // into now's timezone via glib, so local midnights, weekday names, and
-    // absolute dates are correct for any IANA offset (including half- and
-    // quarter-hour zones) without manual offset arithmetic.
+    // Calendar boundaries and labels must use the same timezone as now.
     let converted = modified.to_timezone(&now.timezone());
-    // to_timezone() only fails on null arguments (impossible here: both
-    // zones come from live DateTimes) or allocation failure (which aborts),
-    // so this fallback never triggers in practice; keep the entry's own
-    // zone rather than panicking.
     let modified = converted.as_ref().unwrap_or(modified);
     let absolute = |format: DateFormat| {
         modified
@@ -268,16 +273,12 @@ fn modified_date_at(modified: &glib::DateTime, now: &glib::DateTime, format: Dat
     // regardless of time of day.
     let day_diff = calendar_day_difference(modified, now).unwrap_or(span / 86_400_000_000);
     if day_diff == 0 {
-        // Residual case: more than 23 hours elapsed inside one local calendar
-        // day, possible only on long DST days (e.g. a 25-hour fall-back day).
-        // Clamp to the top of the hours band rather than emitting "24h ago"
-        // or higher, and never fall through to the weekday branch while still
-        // inside the same local calendar day.
-        return format!("{}h ago", hours.min(23));
+        // A fall-back day can exceed 24 elapsed hours before local midnight.
+        return format!("{hours}h ago");
     }
     if day_diff <= 6 {
         modified
-            .format("%a")
+            .format("%A")
             .map(|s| s.to_string())
             .unwrap_or_else(|_| "—".to_owned())
     } else if day_diff <= 30 {

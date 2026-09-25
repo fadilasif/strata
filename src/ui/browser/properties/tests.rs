@@ -35,6 +35,106 @@ fn size_label(widget: &gtk::Widget) -> Option<gtk::Label> {
 }
 
 #[test]
+fn modified_dates_stay_local_and_follow_preferences_through_metadata_loading() {
+    crate::test_support::gtk_test_with_env(
+        "ui::browser::properties::tests::modified_dates_stay_local_and_follow_preferences_through_metadata_loading",
+        [("TZ", "America/New_York")],
+        || {
+            use crate::{
+                model::MetadataValue, ui::preferences::PreferenceManager, util::DateFormat,
+            };
+
+            PreferenceManager::seed_saved_preferences_for_test();
+            let root = tempfile::tempdir().expect("fixture");
+            let path = root.path().join("dated.txt");
+            std::fs::write(&path, b"date fixture").expect("file");
+            let seconds = 1_790_299_800;
+            let modified = std::time::UNIX_EPOCH + Duration::from_secs(seconds as u64);
+            for path in [path.as_path(), root.path()] {
+                std::fs::File::open(path)
+                    .expect("fixture handle")
+                    .set_modified(modified)
+                    .expect("fixture timestamp");
+            }
+            let windows = [0, 1].map(|_| {
+                let view = crate::ui::browser::BrowserView::new(
+                    Rc::new(crate::adapters::LocalFileSource),
+                    crate::ui::browser::PeekBehavior::default(),
+                );
+                let overlay = gtk::Overlay::new();
+                overlay.set_child(Some(&view.widget()));
+                let window = gtk::Window::builder().child(&overlay).build();
+                window.present();
+                (view, overlay, window)
+            });
+            let mut entry = selection_entry(&path, false, 12);
+            // A stale cached value proves that async hydration replaces the binding too.
+            entry.modified_unix_seconds = MetadataValue::Known(seconds - 86400);
+            windows[0].0.state.show_entry_properties(entry.clone());
+            windows[1]
+                .0
+                .state
+                .show_folder_properties(&Location::local(root.path()));
+            let labels = windows.each_ref().map(|(_, overlay, _)| {
+                row_label(overlay.upcast_ref(), "MODIFIED").expect("Properties MODIFIED row")
+            });
+            assert_eq!(labels[0].text(), "2026-09-23 21:30");
+            assert_eq!(labels[1].text(), "—");
+
+            let manager = PreferenceManager::shared();
+            manager.set_date_format(DateFormat::Long);
+            assert_eq!(labels[0].text(), "September 23, 2026, 21:30");
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while labels
+                .iter()
+                .any(|label| label.text() != "September 24, 2026, 21:30")
+            {
+                assert!(
+                    Instant::now() < deadline,
+                    "async dates did not converge: {:?}",
+                    labels.each_ref().map(|label| label.text())
+                );
+                glib::MainContext::default().iteration(false);
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            for (format, expected) in [
+                (DateFormat::Relative, "Sep 24, 2026, 9:30 PM"),
+                (DateFormat::Iso8601, "2026-09-24 21:30"),
+                (DateFormat::Long, "September 24, 2026, 21:30"),
+            ] {
+                manager.set_date_format(format);
+                for label in &labels {
+                    assert_eq!(label.text(), expected);
+                }
+            }
+
+            let (view, overlay, _) = &windows[0];
+            let layer = overlay
+                .last_child()
+                .and_downcast::<gtk::Box>()
+                .expect("modal layer");
+            dismiss_modal_layer(&layer, overlay, None);
+            while layer.parent().is_some() {
+                assert!(Instant::now() < deadline, "Properties did not close");
+                glib::MainContext::default().iteration(false);
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            entry.modified_unix_seconds = MetadataValue::Known(seconds);
+            view.state.show_entry_properties(entry);
+            let reopened = row_label(overlay.upcast_ref(), "MODIFIED").expect("reopened date");
+            assert_eq!(reopened.text(), "September 24, 2026, 21:30");
+            manager.set_date_format(DateFormat::Iso8601);
+            assert_eq!(reopened.text(), "2026-09-24 21:30");
+            assert_eq!(labels[1].text(), "2026-09-24 21:30");
+            for (view, _, window) in windows {
+                window.destroy();
+                view.browser().clear_observer();
+            }
+        },
+    );
+}
+
+#[test]
 fn folder_properties_loads_sizes_and_reports_unavailable_roots() {
     crate::test_support::gtk_test(
         "ui::browser::properties::tests::folder_properties_loads_sizes_and_reports_unavailable_roots",
