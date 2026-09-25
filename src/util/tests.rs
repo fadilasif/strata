@@ -159,7 +159,6 @@ fn calendar_rendering_converts_entries_into_now_timezone() {
         glib::TimeZone::from_identifier(Some("America/New_York")).expect("America/New_York");
     let modified = utc_date(2026, 9, 7, 3, 30);
     let now = date_in_timezone(&new_york, 2026, 9, 8, 3, 30);
-    // Monday in UTC is Sunday locally; use the local date for both styles.
     for (format, expected) in [
         (DateFormat::Relative, "Sunday"),
         (DateFormat::Iso8601, "2026-09-06 23:30"),

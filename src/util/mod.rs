@@ -71,7 +71,6 @@ pub fn modified_date(entry: &FileEntry) -> String {
     modified_date_for_seconds(seconds, DateDisplay::Preferred)
 }
 
-/// Bind an absolute local timestamp, preserving the saved ISO/Long format.
 pub(crate) fn set_full_modified_date(label: &gtk::Label, seconds: Option<i64>) {
     bind_modified_date(label, seconds, "—", DateDisplay::Full);
 }
@@ -234,7 +233,6 @@ fn calendar_day_difference(modified: &glib::DateTime, now: &glib::DateTime) -> O
 }
 
 fn modified_date_at(modified: &glib::DateTime, now: &glib::DateTime, format: DateFormat) -> String {
-    // Calendar boundaries and labels must use the same timezone as now.
     let converted = modified.to_timezone(&now.timezone());
     let modified = converted.as_ref().unwrap_or(modified);
     let absolute = |format: DateFormat| {
@@ -253,8 +251,6 @@ fn modified_date_at(modified: &glib::DateTime, now: &glib::DateTime, format: Dat
         return absolute(DateFormat::Relative);
     }
 
-    // Compact relative units with no seconds: sub-hour recency is always
-    // elapsed time, even across midnight.
     let seconds = span / 1_000_000;
     if seconds < 60 {
         return "Just now".to_owned();
@@ -263,14 +259,10 @@ fn modified_date_at(modified: &glib::DateTime, now: &glib::DateTime, format: Dat
     if minutes < 60 {
         return format!("{minutes}m ago");
     }
-    // Elapsed hours rule the first day: weekday names only begin once a full
-    // 24 hours have passed, even across midnight.
     let hours = span / 3_600_000_000;
     if hours < 24 {
         return format!("{hours}h ago");
     }
-    // Beyond that, calendar days decide so weekdays and weeks stay correct
-    // regardless of time of day.
     let day_diff = calendar_day_difference(modified, now).unwrap_or(span / 86_400_000_000);
     if day_diff == 0 {
         // A fall-back day can exceed 24 elapsed hours before local midnight.
