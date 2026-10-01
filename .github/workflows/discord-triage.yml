@@ -2,8 +2,7 @@ name: Discord report triage
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: '*/5 * * * *'
+
 
 concurrency:
   group: discord-report-triage
