@@ -94,14 +94,8 @@ fn app_ids(apps: &[gio::AppInfo]) -> HashSet<String> {
         .collect()
 }
 
-/// Splits stored history into displayable Recently Used entries, most recent
-/// first, and removes them from the other sections so no app appears twice.
-///
-/// Eligibility is whatever the dialog offers: Recommended is already
-/// intersected across every selected type, while Other is only consulted for
-/// single-type dialogs so multi-type selections keep the strict intersection
-/// guarantee. Every candidate already passed the show/URI filters and exists
-/// on disk, so history can never surface a stale or unlaunchable app.
+// For mixed types, only promote handlers shared by every type. Single-type
+// history may also promote applications explicitly chosen from Other.
 fn split_recent(
     content_types: &[String],
     recommended: &mut Vec<gio::AppInfo>,

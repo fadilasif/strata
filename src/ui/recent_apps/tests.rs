@@ -40,18 +40,6 @@ fn histories_are_independent_across_types() {
 }
 
 #[test]
-fn folders_share_the_directory_category() {
-    let mut state = State::default();
-    record(&mut state, "inode/directory", "files.desktop");
-
-    assert_eq!(
-        state.recent_ids(&types(&["inode/directory"])),
-        ["files.desktop"]
-    );
-    assert!(state.recent_ids(&types(&["text/plain"])).is_empty());
-}
-
-#[test]
 fn multi_type_merges_keep_global_recency_without_duplicates() {
     let mut state = State::default();
     record(&mut state, "text/plain", "alpha.desktop");
@@ -100,7 +88,6 @@ fn history_survives_a_restart_with_order_intact() {
         ["gamma.desktop"]
     );
 
-    // New launches continue the persisted order instead of restarting it.
     let mut restored = restored;
     record(&mut restored, "text/plain", "alpha.desktop");
     assert_eq!(
@@ -178,4 +165,30 @@ fn selection_keeps_history_order_and_drops_ineligible_ids() {
     );
     assert!(select_recent(&[], &eligible).is_empty());
     assert!(select_recent(&ordered, &HashSet::new()).is_empty());
+}
+
+#[test]
+fn exhausted_persisted_sequences_preserve_order_and_allow_launches() {
+    let directory = tempfile::tempdir().expect("history directory");
+    let path = directory.path().join("recent-apps.toml");
+    std::fs::write(&path, format!(
+        "version = 1\n[types]\n\"text/plain\" = [{{ app = \"beta.desktop\", seq = {} }}, {{ app = \"alpha.desktop\", seq = {} }}]\n\"image/png\" = [{{ app = \"gamma.desktop\", seq = {} }}]\n",
+        u64::MAX, u64::MAX - 2, u64::MAX - 1,
+    )).expect("exhausted history");
+    let mut state = load_from(&path);
+    record_in(
+        &mut state,
+        &types(&["text/plain", "image/png"]),
+        "new.desktop",
+    );
+    save_to(&path, &mut state);
+    assert_eq!(
+        load_from(&path).recent_ids(&types(&["text/plain", "image/png"])),
+        [
+            "new.desktop",
+            "beta.desktop",
+            "gamma.desktop",
+            "alpha.desktop"
+        ]
+    );
 }

@@ -1,15 +1,7 @@
 // SPDX-License-Identifier: MIT
 
-//! Recently-used application history for the Open With dialog.
-//!
-//! History is keyed by MIME type (folders share `inode/directory`), never by
-//! file path, so launching an app on one file surfaces it for every file of
-//! the same type. Each list holds desktop IDs ordered most-recent-first with
-//! a monotonic sequence, so restarts and multi-type merges keep true recency
-//! order without depending on wall-clock time. Display code shows a stored
-//! entry only while it remains among the resolved candidates, so MIME-type
-//! and URI-support constraints always apply; entries for uninstalled
-//! applications are pruned when new usage is recorded.
+//! MIME-keyed history uses persisted sequence numbers rather than wall-clock time
+//! to preserve recency across restarts and multi-type selections.
 
 use std::{
     cmp::Reverse,
@@ -44,8 +36,7 @@ pub(super) fn history_path() -> PathBuf {
     gtk::glib::user_data_dir().join(STATE_FILE)
 }
 
-/// Records a successful launch of `app_id` for every selected type.
-/// Failures are advisory: history must never break opening files.
+// History failures must not prevent launching files.
 pub(super) fn record(content_types: &[String], app_id: &str, known_ids: &HashSet<String>) {
     if app_id.is_empty() || content_types.is_empty() {
         return;
@@ -103,7 +94,7 @@ fn save_to(path: &Path, state: &mut State) {
 }
 
 fn record_in(state: &mut State, content_types: &[String], app_id: &str) {
-    let base = next_seq(state);
+    let base = next_seq(state, content_types.len());
     for (offset, content_type) in content_types.iter().enumerate() {
         let entries = state.types.entry(content_type.clone()).or_default();
         entries.retain(|entry| entry.app != app_id);
@@ -118,20 +109,37 @@ fn record_in(state: &mut State, content_types: &[String], app_id: &str) {
     }
 }
 
-fn next_seq(state: &State) -> u64 {
-    state
+fn next_seq(state: &mut State, count: usize) -> u64 {
+    let maximum = state
         .types
         .values()
         .flatten()
         .map(|entry| entry.seq)
         .max()
-        .map_or(1, |seq| seq + 1)
+        .unwrap_or(0);
+    if maximum.checked_add(count as u64).is_some() {
+        return maximum + 1;
+    }
+    // Compact persisted counters without changing recency, including ties.
+    let mut sequences: Vec<u64> = state
+        .types
+        .values()
+        .flatten()
+        .map(|entry| entry.seq)
+        .collect();
+    sequences.sort_unstable();
+    sequences.dedup();
+    for entry in state.types.values_mut().flatten() {
+        entry.seq = sequences
+            .binary_search(&entry.seq)
+            .expect("existing sequence") as u64
+            + 1;
+    }
+    sequences.len() as u64 + 1
 }
 
-/// Drops entries for applications with no installed desktop file. Entries for
-/// installed but currently incompatible applications are kept: they stay
-/// valid for other types and must survive transient association changes. The
-/// empty-set guard keeps a broken application database from wiping history.
+// Preserve history if application discovery fails; association changes alone
+// do not make an installed application's history stale.
 fn prune_unknown(state: &mut State, known_ids: &HashSet<String>) {
     if known_ids.is_empty() {
         return;
@@ -143,7 +151,6 @@ fn prune_unknown(state: &mut State, known_ids: &HashSet<String>) {
 }
 
 impl State {
-    /// Desktop IDs for the selected types merged most-recent-first.
     pub(super) fn recent_ids(&self, content_types: &[String]) -> Vec<String> {
         let mut ordered: Vec<(&str, u64)> = Vec::new();
         for content_type in content_types {
@@ -161,9 +168,6 @@ impl State {
     }
 }
 
-/// Keeps the caller-provided order, dropping IDs outside the eligible set.
-/// Eligibility (MIME compatibility, multi-type intersection, URI support) is
-/// decided by the caller from resolved candidates, so this stays total.
 pub(super) fn select_recent(ordered_ids: &[String], eligible_ids: &HashSet<String>) -> Vec<String> {
     ordered_ids
         .iter()

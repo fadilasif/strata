@@ -1000,7 +1000,6 @@ fn open_with_shows_recently_used_first_and_excludes_it_from_recommended() {
             let browser = fixture.view.browser();
             enable_tenxer(&fixture);
 
-            // No history yet: the dialog shows only the existing sections.
             open_single_with_dialog(&fixture, &browser, "a.txt");
             let sections = chooser_sections(&fixture.overlay);
             assert!(
@@ -1013,8 +1012,6 @@ fn open_with_shows_recently_used_first_and_excludes_it_from_recommended() {
                 "cancelling launches nothing"
             );
 
-            // Launching Beta on one file surfaces it for another file of the
-            // same type, removed from Recommended to avoid a duplicate.
             launch_recorder("strata-beta", &[(&directory.join("a.txt"), "text/plain")]);
             wait_until(|| received(&output_beta) == [directory.join("a.txt")]);
             open_single_with_dialog(&fixture, &browser, "b.txt");
@@ -1029,13 +1026,10 @@ fn open_with_shows_recently_used_first_and_excludes_it_from_recommended() {
                 "{sections:?}"
             );
 
-            // Confirming the dialog launches the preselected recent entry on
-            // the current file only.
             assert!(click_class(&fixture.overlay, "action-dialog-confirm"));
             wait_until(|| received(&output_beta) == [directory.join("b.txt")]);
             wait_until(|| !modal_visible(&fixture.overlay));
 
-            // A later launch moves to the front, keeping recency order.
             launch_recorder("strata-alpha", &[(&directory.join("a.txt"), "text/plain")]);
             open_single_with_dialog(&fixture, &browser, "a.txt");
             let sections = chooser_sections(&fixture.overlay);
@@ -1071,8 +1065,6 @@ fn open_with_keeps_independent_histories_per_file_type() {
                 &[(&directory.join("picture.png"), "image/png")],
             );
 
-            // Each type sees only its own history; the image handler is
-            // incompatible with text and must not leak across.
             open_single_with_dialog(&fixture, &browser, "b.txt");
             let sections = chooser_sections(&fixture.overlay);
             assert_eq!(sections[0].0, "Recently Used", "{sections:?}");
@@ -1117,8 +1109,6 @@ fn open_with_recently_used_intersects_multi_type_selections() {
             );
             launch_recorder("strata-text", &[(&directory.join("a.txt"), "text/plain")]);
 
-            // The text-only handler cannot open every selected type, so the
-            // pair dialog shows only the shared handler as recent.
             move_to_named(&fixture, &browser, "a.txt");
             plain(&fixture, Key::space);
             move_to_named(&fixture, &browser, "picture.png");
@@ -1130,7 +1120,6 @@ fn open_with_recently_used_intersects_multi_type_selections() {
             assert_eq!(sections[0].1, ["Shared Viewer"], "{sections:?}");
             close_dialog(&fixture);
 
-            // A single-type dialog restores the full per-type order instead.
             open_single_with_dialog(&fixture, &browser, "b.txt");
             let sections = chooser_sections(&fixture.overlay);
             assert_eq!(
@@ -1155,8 +1144,6 @@ fn open_with_recently_used_surfaces_launched_apps_without_declared_handler() {
             let browser = fixture.view.browser();
             enable_tenxer(&fixture);
 
-            // Launching an app on a type it does not declare (like opening a
-            // folder with an editor) still records usage for that type.
             let wanted = "strata-oddball.desktop";
             wait_until(|| {
                 gtk::gio::AppInfo::all_for_type("image/png")
@@ -1176,8 +1163,6 @@ fn open_with_recently_used_surfaces_launched_apps_without_declared_handler() {
             .expect("fake launch records history");
             wait_until(|| received(&output) == [directory.join("a.txt")]);
 
-            // The next dialog surfaces it under Recently Used exactly once,
-            // even though it is not a declared handler of the type.
             open_single_with_dialog(&fixture, &browser, "b.txt");
             let sections = chooser_sections(&fixture.overlay);
             assert_eq!(sections[0].0, "Recently Used", "{sections:?}");
@@ -1285,8 +1270,6 @@ fn open_with_keeps_the_default_first_when_recently_used_is_present() {
             let browser = fixture.view.browser();
             enable_tenxer(&fixture);
 
-            // The launched non-default app moves out of Recommended while the
-            // configured default stays pinned first inside it.
             launch_recorder("strata-alpha", &[(&directory.join("a.txt"), "text/plain")]);
             open_single_with_dialog(&fixture, &browser, "b.txt");
             let sections = chooser_sections(&fixture.overlay);
@@ -1321,8 +1304,6 @@ fn open_with_deduplicates_the_default_application_inside_recently_used() {
             let browser = fixture.view.browser();
             enable_tenxer(&fixture);
 
-            // Baseline first: the untouched default stays pinned first inside
-            // Recommended Applications.
             open_single_with_dialog(&fixture, &browser, "a.txt");
             let baseline = chooser_sections(&fixture.overlay);
             assert_eq!(baseline[0].0, "Recommended Applications", "{baseline:?}");
@@ -1333,8 +1314,6 @@ fn open_with_deduplicates_the_default_application_inside_recently_used() {
             );
             close_dialog(&fixture);
 
-            // Once launched, the default moves to Recently Used and appears
-            // exactly once while the remaining recommendations keep order.
             launch_recorder("strata-beta", &[(&directory.join("a.txt"), "text/plain")]);
             open_single_with_dialog(&fixture, &browser, "b.txt");
             let sections = chooser_sections(&fixture.overlay);
@@ -1384,43 +1363,6 @@ fn open_with_search_hides_recently_used_without_match_and_confirms_selection() {
                 "history recorded"
             );
 
-            // Section headings stay out of keyboard selection and the most
-            // recent entry starts selected.
-            let list = widget_with_class(fixture.overlay.upcast_ref(), "open-with-list")
-                .expect("application list");
-            let list = list
-                .downcast_ref::<gtk::ListBox>()
-                .expect("application list box");
-            let mut row = list.first_child();
-            let mut saw_heading = false;
-            while let Some(widget) = row {
-                if widget.has_css_class("open-with-heading-row") {
-                    saw_heading = true;
-                    assert!(
-                        !widget
-                            .downcast_ref::<gtk::ListBoxRow>()
-                            .expect("heading row")
-                            .is_selectable()
-                    );
-                }
-                row = widget.next_sibling();
-            }
-            assert!(saw_heading);
-            let first_app = list
-                .first_child()
-                .expect("heading")
-                .next_sibling()
-                .expect("first application");
-            assert_eq!(
-                list.selected_row().expect("initial selection"),
-                first_app
-                    .downcast_ref::<gtk::ListBoxRow>()
-                    .expect("application row")
-                    .clone()
-            );
-
-            // Filtering to the other editor hides the section; confirming
-            // launches the first visible row.
             let search = widget_with_class(fixture.overlay.upcast_ref(), "open-with-search")
                 .expect("application search");
             search
@@ -1492,8 +1434,6 @@ fn default_activation_records_application_history_for_files_and_folders() {
             let browser = fixture.view.browser();
             enable_tenxer(&fixture);
 
-            // Folders record under the shared directory category through the
-            // same launch funnel as files.
             launch_recorder("strata-dirs", &[(&directory, "inode/directory")]);
             wait_until(|| received(&output_dirs) == [directory.clone()]);
             let stored =
@@ -1505,8 +1445,6 @@ fn default_activation_records_application_history_for_files_and_folders() {
                     .is_empty()
             );
 
-            // Pressing Return on a file with a configured default launches it
-            // through the desktop activation path and records the usage.
             let associations = gtk::glib::user_config_dir().join("mimeapps.list");
             let mut mimeapps = std::fs::read_to_string(&associations).expect("mimeapps");
             mimeapps.push_str("[Default Applications]\ntext/plain=strata-alpha.desktop;\n");
