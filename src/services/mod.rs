@@ -17,6 +17,7 @@ mod operations;
 pub(crate) mod package_manager;
 mod preview;
 mod release_channel;
+mod remote_download;
 pub(crate) mod rtf;
 mod search;
 pub(crate) mod table;
@@ -84,10 +85,13 @@ pub(crate) use transfer_action::{
 // business calling it. Widening this re-export would make that bypass
 // reachable from UI code.
 pub(crate) use release_channel::{BuildKind, Channel, Version};
+pub(crate) use remote_download::{
+    RemoteDownload, download_remote, prune_stale_downloads, remote_file_name, remote_file_url,
+};
 pub(crate) use search::{RESULT_LIMIT as SEARCH_RESULT_LIMIT, refresh_search_indexes_for_rename};
 pub(crate) use search::{
     SearchCoverage, SearchEvent, SearchHandle, SearchItem, filter_name_matches,
-    filter_query_allows_typos, fold_for_search, index_filter, index_tree, index_trees,
+    filter_query_allows_typos, fold_for_search, index_filter, index_trees,
 };
 pub(crate) use update_check::{
     ReleaseMetadata, ReleaseNotes, UpdateCheck, check_for_updates, fetch_release_notes,
