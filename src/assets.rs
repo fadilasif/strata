@@ -47,6 +47,7 @@ pub mod icons {
     pub const FILE_BRACES: &str = "strata-file-braces";
     pub const FILE_FONT: &str = "strata-file-font";
     pub const FILE_MARKDOWN: &str = "strata-file-markdown";
+    pub const FILE_PDF: &str = "strata-file-pdf";
     pub const FILE_CODE: &str = "strata-file-code";
     pub const FILE_SPREADSHEET: &str = "strata-file-spreadsheet";
     pub const FILE_TERMINAL: &str = "strata-file-terminal";

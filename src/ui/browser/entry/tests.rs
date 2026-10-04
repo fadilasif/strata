@@ -269,7 +269,7 @@ fn fonts_sheets_documents_and_packages_keep_their_specific_icons() {
         assert_eq!(icon_for_name(name), icons::FILE_FONT, "font: {name}");
     }
     assert_eq!(icon_for_name("data.tsv"), icons::FILE_SPREADSHEET);
-    assert_eq!(icon_for_name("doc.pdf"), icons::DOCUMENTS);
+    assert_eq!(icon_for_name("doc.pdf"), icons::FILE_PDF);
     assert_eq!(icon_for_name("app.apk"), icons::BOX);
     assert_eq!(icon_for_name("app.installer.AppImage"), icons::BOX);
 }

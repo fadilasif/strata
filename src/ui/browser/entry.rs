@@ -311,7 +311,8 @@ pub(in crate::ui) fn icon_for_name(name: &str) -> &'static str {
         Some("ttf" | "otf" | "woff" | "woff2" | "eot" | "ttc" | "otc") => {
             crate::assets::icons::FILE_FONT
         }
-        Some("txt" | "pdf") => crate::assets::icons::DOCUMENTS,
+        Some("txt") => crate::assets::icons::DOCUMENTS,
+        Some("pdf") => crate::assets::icons::FILE_PDF,
         _ => crate::assets::icons::FILE,
     }
 }
