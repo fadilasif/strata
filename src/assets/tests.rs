@@ -40,6 +40,33 @@ fn customization_choices_are_unique_and_whitelisted() {
 }
 
 #[test]
+fn office_icons_render_visible_geometry() {
+    crate::test_support::gtk_test(
+        "assets::tests::office_icons_render_visible_geometry",
+        || {
+            use gtk::prelude::*;
+            for name in ["strata-word", "strata-excel", "strata-powerpoint"] {
+                let texture = super::custom_colored_icon_paintable(name, "#3ddc84")
+                    .expect("office icon renders");
+                let stride = texture.width() as usize * 4;
+                let mut pixels = vec![0; stride * texture.height() as usize];
+                texture.download(&mut pixels, stride);
+                let painted = pixels
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .filter(|pixel| u32::from_ne_bytes(**pixel) >> 24 != 0)
+                    .count();
+                assert!(
+                    painted > 500,
+                    "office icon paints real artwork, not empty pixels: {name}"
+                );
+            }
+        },
+    );
+}
+
+#[test]
 fn custom_emoji_preferences_are_bounded_and_safe_to_render() {
     assert_eq!(icons::custom_emoji("emoji:🚀"), Some("🚀"));
     assert_eq!(icons::custom_emoji("emoji:👨‍👩‍👧‍👦"), Some("👨‍👩‍👧‍👦"));

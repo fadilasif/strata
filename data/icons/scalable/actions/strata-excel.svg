@@ -1,7 +1,12 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter">
-  <path d="M6 11V5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-8"/>
-  <path d="M6 9h16"/>
-  <path d="M14 3v10a2 2 0 0 1-2 2"/>
-  <rect x="2" y="11" width="10" height="10" rx="1.5"/>
-  <path d="M5.2 14.2l3.6 3.6M8.8 14.2l-3.6 3.6" stroke-width="1.25"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+  <g transform="translate(1.5807 1.119) scale(0.0847)">
+    <g fill="none" stroke="#8bc9eb" stroke-width="23.61" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M43.4 225 A40 40 0 0 0 78.9 246.5 H195.5 A40 40 0 0 0 235.5 206.5 V50.4 A40 40 0 0 0 195.5 10.4 H78.9 A40 40 0 0 0 38.9 50.4 V123"/>
+      <path d="M40.2 123 A45 45 0 0 1 84 88.5 H219.5 A16 16 0 0 0 235.5 72.5"/>
+      <path d="M155 88.5 A16 16 0 0 1 139 72.5 V26.4 A16 16 0 0 1 155 10.4 H170"/>
+      <path d="M139 88.5 V141 A24 24 0 0 1 115 165"/>
+      <rect x="10.4" y="123" width="101" height="100" rx="26"/>
+    </g>
+    <path fill="#8bc9eb" d="M37 146 L52 146 L61 160 L70 146 L85 146 L68 173 L85 200 L70 200 L61 186 L52 200 L37 200 L54 173 Z"/>
+  </g>
 </svg>
