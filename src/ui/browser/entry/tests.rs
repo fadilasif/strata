@@ -133,7 +133,7 @@ fn previously_mapped_types_keep_their_icons() {
 
 #[test]
 fn unrecognized_files_fall_back_to_the_unknown_icon() {
-    assert_eq!(icon_for_name("notes.txt"), icons::FILE_QUESTION_MARK);
-    assert_eq!(icon_for_name("Makefile"), icons::FILE_QUESTION_MARK);
-    assert_eq!(icon_for_name("archive.???"), icons::FILE_QUESTION_MARK);
+    assert_eq!(icon_for_name("notes.txt"), icons::FILE);
+    assert_eq!(icon_for_name("Makefile"), icons::FILE);
+    assert_eq!(icon_for_name("archive.???"), icons::FILE);
 }

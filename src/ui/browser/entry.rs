@@ -216,7 +216,7 @@ pub(in crate::ui) fn icon_for_name(name: &str) -> &'static str {
         Some("ppt" | "pptx" | "pps" | "ppsx" | "odp") => crate::assets::icons::POWERPOINT,
         Some("md" | "markdown" | "mdown" | "mkd") => crate::assets::icons::FILE_MARKDOWN,
         Some("ttf" | "otf" | "woff" | "woff2") => crate::assets::icons::FILE_FONT,
-        _ => crate::assets::icons::FILE_QUESTION_MARK,
+        _ => crate::assets::icons::FILE,
     }
 }
 

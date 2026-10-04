@@ -42,12 +42,12 @@ pub mod icons {
     pub const EYE_OFF: &str = "strata-eye-off";
     pub const EXTERNAL_LINK: &str = "strata-external-link";
     pub const FILE_ARCHIVE: &str = "strata-file-archive";
+    pub const FILE: &str = "strata-file";
     pub const FILE_AUDIO: &str = "strata-audio-lines";
     pub const FILE_BRACES: &str = "strata-file-braces";
     pub const FILE_FONT: &str = "strata-file-font";
     pub const FILE_MARKDOWN: &str = "strata-file-markdown";
     pub const FILE_CODE: &str = "strata-file-code";
-    pub const FILE_QUESTION_MARK: &str = "strata-file-question-mark";
     pub const FILE_SPREADSHEET: &str = "strata-file-spreadsheet";
     pub const FILE_TERMINAL: &str = "strata-file-terminal";
     pub const FILE_PLUS: &str = "strata-file-plus";
