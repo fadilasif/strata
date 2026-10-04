@@ -2,6 +2,7 @@
 
 use crate::adapters::directory_summary::{DirectorySummary, summarize_directory};
 use crate::adapters::gio_file_for_location;
+use crate::assets::icons;
 use crate::model::{EntryKind, FileEntry, MetadataValue};
 use crate::services::{
     PathMatcher, PathQuery, PreviewContent, content_family, filter_name_matches, fold_for_search,
@@ -178,11 +179,97 @@ pub(super) fn with_filter_terms<R>(query: &str, apply: impl FnOnce(&mut PathMatc
     })
 }
 
+/// Exact filenames with dedicated icons, checked before any extension rule so
+/// specific names beat generic suffixes. Stored names are lowercase canonical
+/// forms and matched case-insensitively.
+static FILENAME_ICONS: &[(&str, &str)] = &[
+    // Lockfiles and shrinkwrap beat the generic .json/.yaml extension.
+    ("package-lock.json", icons::COG),
+    ("npm-shrinkwrap.json", icons::COG),
+    ("pnpm-lock.yaml", icons::COG),
+    ("bun.lockb", icons::COG),
+    ("cargo.lock", icons::COG),
+    // Recognized project and build manifests.
+    ("gemfile", icons::COG),
+    ("go.mod", icons::COG),
+    ("pom.xml", icons::COG),
+    ("build.gradle", icons::COG),
+    ("cmakelists.txt", icons::COG),
+    ("dockerfile", icons::COG),
+    ("makefile", icons::COG),
+    // Git, editor, and package-manager configuration dotfiles.
+    (".gitignore", icons::COG),
+    (".gitconfig", icons::COG),
+    (".editorconfig", icons::COG),
+    (".inputrc", icons::COG),
+    (".npmrc", icons::COG),
+    (".yarnrc", icons::COG),
+    (".pypirc", icons::COG),
+    (".xcompose", icons::COG),
+    (".vimrc", icons::COG),
+    (".gvimrc", icons::COG),
+    (".viminfo", icons::COG),
+    // Shell rcs and session files use the terminal glyph.
+    (".bashrc", icons::FILE_TERMINAL),
+    (".bash_profile", icons::FILE_TERMINAL),
+    (".bash_login", icons::FILE_TERMINAL),
+    (".bash_logout", icons::FILE_TERMINAL),
+    (".zshrc", icons::FILE_TERMINAL),
+    (".zprofile", icons::FILE_TERMINAL),
+    (".zlogin", icons::FILE_TERMINAL),
+    (".zlogout", icons::FILE_TERMINAL),
+    (".profile", icons::FILE_TERMINAL),
+    (".login", icons::FILE_TERMINAL),
+    (".logout", icons::FILE_TERMINAL),
+    (".kshrc", icons::FILE_TERMINAL),
+    (".cshrc", icons::FILE_TERMINAL),
+    (".tcshrc", icons::FILE_TERMINAL),
+    // Known SSH key files.
+    ("id_rsa", icons::KEY_ROUND),
+    ("id_ed25519", icons::KEY_ROUND),
+    ("authorized_keys", icons::KEY_ROUND),
+    ("known_hosts", icons::KEY_ROUND),
+    // Recognized extensionless documents.
+    ("readme", icons::DOCUMENTS),
+    ("license", icons::DOCUMENTS),
+];
+
+/// (prefix, suffix, icon) filename affix patterns, first match wins. Either
+/// end may be empty (but not both). Checked after exact names so Dockerfile
+/// beats a hypothetical Dockerfile.txt, and before extensions so `*_history`
+/// and `*.lock` win over any suffix they carry. Matched case-sensitively
+/// against the literal filename; entries carry their canonical casing.
+static FILENAME_AFFIX_PATTERNS: &[(&str, &str, &str)] = &[
+    ("Dockerfile.", "", icons::COG),
+    ("tsconfig.", ".json", icons::COG),
+    ("", "_history", icons::FILE_TERMINAL),
+    ("", ".lock", icons::COG),
+];
+
+fn exact_filename_icon(lowered: &str) -> Option<&'static str> {
+    FILENAME_ICONS
+        .iter()
+        .find(|(name, _)| *name == lowered)
+        .map(|(_, icon)| *icon)
+}
+
+fn affix_pattern_icon(name: &str) -> Option<&'static str> {
+    FILENAME_AFFIX_PATTERNS
+        .iter()
+        .find(|(prefix, suffix, _)| name.starts_with(prefix) && name.ends_with(suffix))
+        .map(|(_, _, icon)| *icon)
+}
+
 pub(in crate::ui) fn icon_for_name(name: &str) -> &'static str {
-    let extension = name
-        .rsplit_once('.')
-        .map(|(_, extension)| extension.to_ascii_lowercase());
-    match extension.as_deref() {
+    let lowered = name.to_ascii_lowercase();
+    if let Some(icon) = exact_filename_icon(&lowered) {
+        return icon;
+    }
+    if let Some(icon) = affix_pattern_icon(name) {
+        return icon;
+    }
+    let extension = lowered.rsplit_once('.').map(|(_, extension)| extension);
+    match extension {
         Some(
             "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" | "bmp" | "avif" | "heic" | "heif"
             | "jxl" | "tif" | "tiff" | "3fr" | "arw" | "cr2" | "cr3" | "dcr" | "dng" | "erf"
@@ -197,17 +284,23 @@ pub(in crate::ui) fn icon_for_name(name: &str) -> &'static str {
         Some("zip" | "7z" | "tar" | "gz" | "tgz" | "bz2" | "xz" | "zst" | "rar") => {
             crate::assets::icons::FILE_ARCHIVE
         }
-        Some("deb" | "rpm" | "pkg" | "appimage" | "msi" | "exe") => crate::assets::icons::BOX,
-        Some("pem" | "crt" | "cer" | "key" | "der" | "csr") => crate::assets::icons::KEY_ROUND,
+        Some("deb" | "rpm" | "pkg" | "appimage" | "msi" | "exe" | "apk") => {
+            crate::assets::icons::BOX
+        }
+        Some("pem" | "crt" | "cer" | "key" | "der" | "csr" | "pub" | "p12" | "pfx" | "jks") => {
+            crate::assets::icons::KEY_ROUND
+        }
         Some("yaml" | "yml" | "toml" | "ini" | "conf" | "env") => crate::assets::icons::COG,
         Some("json" | "jsonc") => crate::assets::icons::FILE_BRACES,
-        Some("db" | "sqlite" | "sqlite3") => crate::assets::icons::DATABASE,
+        Some("db" | "sqlite" | "sqlite3" | "sql" | "psql" | "pgsql" | "mdb" | "accdb") => {
+            crate::assets::icons::DATABASE
+        }
         Some("iso" | "img" | "dmg" | "vhd" | "vhdx" | "vdi" | "qcow") => crate::assets::icons::DISC,
-        Some("csv") => crate::assets::icons::FILE_SPREADSHEET,
+        Some("csv" | "tsv") => crate::assets::icons::FILE_SPREADSHEET,
         Some("xls" | "xlsx" | "ods") => crate::assets::icons::EXCEL,
         Some(
             "rs" | "c" | "h" | "cpp" | "hpp" | "go" | "java" | "kt" | "swift" | "dart" | "scala"
-            | "hs" | "lua" | "rb" | "php" | "py" | "js" | "ts" | "jsx" | "tsx",
+            | "hs" | "lua" | "rb" | "php" | "py" | "js" | "ts" | "jsx" | "tsx" | "m" | "v" | "cs",
         ) => crate::assets::icons::FILE_CODE,
         Some("sh" | "bash" | "zsh" | "fish" | "ksh" | "csh" | "ps1" | "bat" | "cmd") => {
             crate::assets::icons::FILE_TERMINAL
@@ -215,7 +308,10 @@ pub(in crate::ui) fn icon_for_name(name: &str) -> &'static str {
         Some("doc" | "docx" | "odt" | "rtf") => crate::assets::icons::WORD,
         Some("ppt" | "pptx" | "pps" | "ppsx" | "odp") => crate::assets::icons::POWERPOINT,
         Some("md" | "markdown" | "mdown" | "mkd") => crate::assets::icons::FILE_MARKDOWN,
-        Some("ttf" | "otf" | "woff" | "woff2") => crate::assets::icons::FILE_FONT,
+        Some("ttf" | "otf" | "woff" | "woff2" | "eot" | "ttc" | "otc") => {
+            crate::assets::icons::FILE_FONT
+        }
+        Some("txt" | "pdf") => crate::assets::icons::DOCUMENTS,
         _ => crate::assets::icons::FILE,
     }
 }

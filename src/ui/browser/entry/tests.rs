@@ -133,7 +133,173 @@ fn previously_mapped_types_keep_their_icons() {
 
 #[test]
 fn unrecognized_files_fall_back_to_the_unknown_icon() {
-    assert_eq!(icon_for_name("notes.txt"), icons::FILE);
-    assert_eq!(icon_for_name("Makefile"), icons::FILE);
+    assert_eq!(icon_for_name("notes.xyz"), icons::FILE);
+    assert_eq!(icon_for_name("randomfile"), icons::FILE);
     assert_eq!(icon_for_name("archive.???"), icons::FILE);
+}
+
+#[test]
+fn history_and_shell_rc_dotfiles_resolve_to_the_terminal_icon() {
+    for name in [
+        ".bash_history",
+        ".zsh_history",
+        ".fish_history",
+        ".python_history",
+        ".psql_history",
+        ".mysql_history",
+        ".sqlite_history",
+        ".bashrc",
+        ".bash_profile",
+        ".bash_login",
+        ".bash_logout",
+        ".zshrc",
+        ".zprofile",
+        ".zlogin",
+        ".zlogout",
+        ".profile",
+        ".login",
+        ".logout",
+        ".kshrc",
+        ".cshrc",
+        ".tcshrc",
+    ] {
+        assert_eq!(
+            icon_for_name(name),
+            icons::FILE_TERMINAL,
+            "history and shell rc dotfile: {name}"
+        );
+    }
+}
+
+#[test]
+fn history_suffix_matches_case_sensitively() {
+    assert_eq!(icon_for_name(".bash_history"), icons::FILE_TERMINAL);
+    assert_eq!(icon_for_name(".BASH_HISTORY"), icons::FILE);
+}
+
+#[test]
+fn lockfiles_resolve_to_the_config_icon() {
+    for name in [
+        "package-lock.json",
+        "npm-shrinkwrap.json",
+        "pnpm-lock.yaml",
+        "bun.lock",
+        "bun.lockb",
+        "Cargo.lock",
+        "yarn.lock",
+        "Gemfile.lock",
+        "poetry.lock",
+        "uv.lock",
+    ] {
+        assert_eq!(icon_for_name(name), icons::COG, "lockfile: {name}");
+    }
+}
+
+#[test]
+fn dotfiles_and_build_files_resolve_to_the_config_icon() {
+    for name in [
+        ".vimrc",
+        ".gitignore",
+        ".gitconfig",
+        ".editorconfig",
+        ".inputrc",
+        ".npmrc",
+        ".yarnrc",
+        ".pypirc",
+        ".XCompose",
+        ".gvimrc",
+        ".viminfo",
+        "Makefile",
+        "makefile",
+        "Dockerfile",
+        "Dockerfile.dev",
+        "tsconfig.json",
+        "tsconfig.base.json",
+        "Gemfile",
+        "go.mod",
+        "pom.xml",
+        "build.gradle",
+        "CMakeLists.txt",
+    ] {
+        assert_eq!(
+            icon_for_name(name),
+            icons::COG,
+            "build and config dotfile: {name}"
+        );
+    }
+}
+
+#[test]
+fn sql_and_database_extensions_resolve_to_the_database_icon() {
+    for name in [
+        "query.sql",
+        "schema.sql",
+        "migration.sql",
+        "query.psql",
+        "query.pgsql",
+        "database.db",
+        "database.sqlite",
+        "database.sqlite3",
+        "catalog.mdb",
+        "catalog.accdb",
+    ] {
+        assert_eq!(icon_for_name(name), icons::DATABASE, "database: {name}");
+    }
+}
+
+#[test]
+fn key_and_certificate_files_resolve_to_the_key_icon() {
+    for name in [
+        "server.pub",
+        "certificate.p12",
+        "certificate.pfx",
+        "keystore.jks",
+        "id_rsa",
+        "id_ed25519",
+        "authorized_keys",
+        "known_hosts",
+    ] {
+        assert_eq!(icon_for_name(name), icons::KEY_ROUND, "key file: {name}");
+    }
+}
+
+#[test]
+fn fonts_sheets_documents_and_packages_keep_their_specific_icons() {
+    for name in ["font.eot", "font.ttc", "font.otc"] {
+        assert_eq!(icon_for_name(name), icons::FILE_FONT, "font: {name}");
+    }
+    assert_eq!(icon_for_name("data.tsv"), icons::FILE_SPREADSHEET);
+    assert_eq!(icon_for_name("doc.pdf"), icons::DOCUMENTS);
+    assert_eq!(icon_for_name("app.apk"), icons::BOX);
+    assert_eq!(icon_for_name("app.installer.AppImage"), icons::BOX);
+}
+
+#[test]
+fn remaining_language_extensions_resolve_to_the_code_icon() {
+    for name in ["source.m", "source.v", "source.cs"] {
+        assert_eq!(icon_for_name(name), icons::FILE_CODE, "code file: {name}");
+    }
+}
+
+#[test]
+fn backup_and_temp_suffixes_never_take_the_semantic_icon() {
+    for name in [
+        ".bashrc.omarchy-upgrade.done.bak",
+        ".bashrc.orig",
+        ".bash_history.bak",
+        ".zshrc.bak",
+        "id_rsa.bak",
+    ] {
+        assert_eq!(icon_for_name(name), icons::FILE, "backup file: {name}");
+    }
+}
+
+#[test]
+fn recognized_extensionless_documents_and_office_files_keep_their_icons() {
+    assert_eq!(icon_for_name("README"), icons::DOCUMENTS);
+    assert_eq!(icon_for_name("LICENSE"), icons::DOCUMENTS);
+    assert_eq!(icon_for_name("history.txt"), icons::DOCUMENTS);
+    assert_eq!(icon_for_name("report.docx"), icons::WORD);
+    assert_eq!(icon_for_name("report.ODT"), icons::WORD);
+    assert_eq!(icon_for_name("sheet.xlsx"), icons::EXCEL);
 }
