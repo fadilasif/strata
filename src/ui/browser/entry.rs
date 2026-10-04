@@ -183,7 +183,6 @@ pub(in crate::ui) fn icon_for_name(name: &str) -> &'static str {
         .rsplit_once('.')
         .map(|(_, extension)| extension.to_ascii_lowercase());
     match extension.as_deref() {
-        Some("sh" | "bash" | "zsh" | "fish") => crate::assets::icons::TERMINAL,
         Some(
             "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" | "bmp" | "avif" | "heic" | "heif"
             | "jxl" | "tif" | "tiff" | "3fr" | "arw" | "cr2" | "cr3" | "dcr" | "dng" | "erf"
@@ -191,14 +190,33 @@ pub(in crate::ui) fn icon_for_name(name: &str) -> &'static str {
             | "rwl" | "sr2" | "srf" | "srw" | "x3f",
         ) => crate::assets::icons::PICTURES,
         Some("mp4" | "mkv" | "webm" | "mov" | "avi" | "m4v") => crate::assets::icons::VIDEOS,
-        Some("zip" | "tar" | "gz" | "bz2" | "xz" | "7z" | "rar" | "zst") => {
+        Some("mp3" | "wav" | "flac" | "ogg" | "m4a" | "aac" | "opus" | "wma" | "aiff") => {
+            crate::assets::icons::FILE_AUDIO
+        }
+        Some("html" | "htm" | "css" | "scss" | "xml") => crate::assets::icons::GLOBE,
+        Some("zip" | "7z" | "tar" | "gz" | "tgz" | "bz2" | "xz" | "zst" | "rar") => {
             crate::assets::icons::FILE_ARCHIVE
         }
+        Some("deb" | "rpm" | "pkg" | "appimage" | "msi" | "exe") => crate::assets::icons::BOX,
+        Some("pem" | "crt" | "cer" | "key" | "der" | "csr") => crate::assets::icons::KEY_ROUND,
+        Some("yaml" | "yml" | "toml" | "ini" | "conf" | "env") => crate::assets::icons::COG,
+        Some("json" | "jsonc") => crate::assets::icons::FILE_BRACES,
+        Some("db" | "sqlite" | "sqlite3") => crate::assets::icons::DATABASE,
+        Some("iso" | "img" | "dmg" | "vhd" | "vhdx" | "vdi" | "qcow") => crate::assets::icons::DISC,
+        Some("csv") => crate::assets::icons::FILE_SPREADSHEET,
+        Some("xls" | "xlsx" | "ods") => crate::assets::icons::EXCEL,
         Some(
-            "rs" | "c" | "h" | "cpp" | "go" | "py" | "rb" | "java" | "js" | "jsx" | "ts" | "tsx"
-            | "lua" | "php" | "html" | "css" | "scss" | "json",
+            "rs" | "c" | "h" | "cpp" | "hpp" | "go" | "java" | "kt" | "swift" | "dart" | "scala"
+            | "hs" | "lua" | "rb" | "php" | "py" | "js" | "ts" | "jsx" | "tsx",
         ) => crate::assets::icons::FILE_CODE,
-        _ => crate::assets::icons::DOCUMENTS,
+        Some("sh" | "bash" | "zsh" | "fish" | "ksh" | "csh" | "ps1" | "bat" | "cmd") => {
+            crate::assets::icons::FILE_TERMINAL
+        }
+        Some("doc" | "docx" | "odt" | "rtf") => crate::assets::icons::WORD,
+        Some("ppt" | "pptx" | "pps" | "ppsx" | "odp") => crate::assets::icons::POWERPOINT,
+        Some("md" | "markdown" | "mdown" | "mkd") => crate::assets::icons::FILE_MARKDOWN,
+        Some("ttf" | "otf" | "woff" | "woff2") => crate::assets::icons::FILE_FONT,
+        _ => crate::assets::icons::FILE_QUESTION_MARK,
     }
 }
 
@@ -258,3 +276,6 @@ pub(super) async fn aggregate_directory_summary(entries: &[FileEntry]) -> Direct
     }
     total
 }
+
+#[cfg(test)]
+mod tests;
