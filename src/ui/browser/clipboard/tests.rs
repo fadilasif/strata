@@ -110,6 +110,95 @@ fn incoming_file_lists_sanitize_remote_credentials() {
     );
 }
 
+fn texture_has_painted_pixels(texture: &gtk::gdk::Texture) -> bool {
+    let stride = texture.width() as usize * 4;
+    let mut data = vec![0u8; stride * texture.height() as usize];
+    texture.download(&mut data, stride);
+    data.iter().any(|&byte| byte != 0)
+}
+
+#[test]
+fn drag_preview_icon_renders_centered_textures_for_single_and_multiple_entries() {
+    crate::test_support::gtk_test(
+        "ui::browser::clipboard::tests::drag_preview_icon_renders_centered_textures_for_single_and_multiple_entries",
+        || {
+            use crate::model::{EntryKind, MetadataValue};
+            use std::ffi::OsString;
+            fn entry(name: &str, kind: EntryKind) -> FileEntry {
+                FileEntry {
+                    thumbnail_path: None,
+                    location: Location::local(format!("/fixture/{name}")),
+                    native_name: OsString::from(name),
+                    display_name: name.into(),
+                    kind,
+                    size: MetadataValue::Unknown,
+                    modified_unix_seconds: MetadataValue::Unknown,
+                    recent_unix_seconds: MetadataValue::Unknown,
+                    is_hidden: false,
+                    mode: MetadataValue::Unknown,
+                    image_dimensions: MetadataValue::Unknown,
+                    child_count: MetadataValue::Unknown,
+                    duration_seconds: MetadataValue::Unknown,
+                }
+            }
+
+            let themes = crate::ui::theme::ThemeManager::shared();
+            themes.select_theme("tokyo-night");
+            crate::ui::window::load_styles();
+            let window = gtk::Window::new();
+            let base = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+            window.set_child(Some(&base));
+            window.present();
+            pump_main_loop_until(std::time::Duration::from_secs(5), || {
+                base.native().is_some()
+            });
+            assert!(
+                base.native().is_some(),
+                "headless stage must realize widgets"
+            );
+
+            let (texture, hot_x, hot_y) =
+                drag_preview_icon(&base, &[entry("photo.png", EntryKind::File)])
+                    .expect("single file preview renders");
+            // The 62px layout canvas plus the icon shadow outset.
+            assert!((62..=68).contains(&texture.width()));
+            assert!((62..=68).contains(&texture.height()));
+            assert_eq!((hot_x, hot_y), (27, 27));
+            assert!(texture_has_painted_pixels(&texture));
+
+            let entries = [
+                entry("photo.png", EntryKind::File),
+                entry("notes.txt", EntryKind::File),
+                entry("archive", EntryKind::Directory),
+            ];
+            let (texture, hot_x, hot_y) =
+                drag_preview_icon(&base, &entries).expect("multi file preview renders");
+            assert!(texture.width() >= 62 && texture.height() >= 62);
+            assert_eq!(
+                (hot_x, hot_y),
+                (27, 27),
+                "the pile keeps the single icon's centered hotspot"
+            );
+            assert!(texture_has_painted_pixels(&texture));
+            window.destroy();
+        },
+    );
+}
+
+#[test]
+fn drag_preview_layout_shares_one_centered_hotspot_with_and_without_a_badge() {
+    let single = drag_preview_layout(48.0, None);
+    assert_eq!(single.hotspot, (27, 27));
+    assert_eq!((single.canvas_w, single.canvas_h), (62.0, 62.0));
+
+    let multi = drag_preview_layout(48.0, Some((24.0, 20.0)));
+    assert_eq!(
+        multi.hotspot, single.hotspot,
+        "single and multiple previews must share the same cursor relationship"
+    );
+    assert!(multi.canvas_w >= single.canvas_w && multi.canvas_h >= single.canvas_h);
+}
+
 #[test]
 fn multi_file_badge_grows_for_multi_digit_counts() {
     let single_digit = badge_dimensions(7.0, 10.0);

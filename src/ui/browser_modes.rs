@@ -2384,7 +2384,7 @@ fn build_icons_view(context: &Rc<IconsContext>, model: &impl IsA<gio::ListModel>
         };
         let thumbnail_size = icons_card_icon_slot(thumbnail_size_for_setup.get());
         let card = super::icons_cell::new_card(thumbnail_size);
-        let Some((icon, rename_label)) = super::icons_cell::parts(&card) else {
+        let Some((_, rename_label)) = super::icons_cell::parts(&card) else {
             return;
         };
         install_icons_content_hover(&card);
@@ -2430,13 +2430,7 @@ fn build_icons_view(context: &Rc<IconsContext>, model: &impl IsA<gio::ListModel>
             depth,
             Some((source_index_for_setup.clone(), filtered_for_setup.clone())),
             peek_for_setup.clone(),
-            (
-                None,
-                Some(icon.upcast_ref()),
-                &content_click,
-                false,
-                slow_click,
-            ),
+            (&content_click, false, slow_click),
         );
         item.set_child(Some(&card));
         if let Some(parent) = card.parent() {
@@ -3731,16 +3725,9 @@ fn install_list_drag_drop(
     depth: usize,
     position_map: Option<(SourceIndexMap, gio::ListModel)>,
     state: Option<Weak<super::browser::ViewState>>,
-    drag_icon_and_content_click: (
-        Option<&gtk::Widget>,
-        Option<&gtk::Widget>,
-        &gtk::GestureClick,
-        bool,
-        Rc<SlowClickRename>,
-    ),
+    drag_icon_and_content_click: (&gtk::GestureClick, bool, Rc<SlowClickRename>),
 ) {
-    let (drag_icon, multi_drag_icon, content_click, list_rows, intent) =
-        drag_icon_and_content_click;
+    let (content_click, list_rows, intent) = drag_icon_and_content_click;
     if transfer_handler.borrow().is_none() {
         return;
     }
@@ -3752,8 +3739,6 @@ fn install_list_drag_drop(
     let dragged_item = item.downgrade();
     let browser_for_drag = browser.clone();
     let map_for_drag = position_map.clone();
-    let drag_icon = drag_icon.map(gtk::Widget::downgrade);
-    let multi_drag_icon = multi_drag_icon.map(gtk::Widget::downgrade);
     let prepare_row = row.downgrade();
     drag.connect_prepare(move |source, x, y| {
         let prepare_row = prepare_row.upgrade()?;
@@ -3793,23 +3778,10 @@ fn install_list_drag_drop(
         } else {
             vec![entry]
         };
-        let compact_icon = drag_icon.as_ref().and_then(glib::WeakRef::upgrade);
-        let multi_drag_icon = multi_drag_icon.as_ref().and_then(glib::WeakRef::upgrade);
-        if let Some((texture, hot_x, hot_y)) = multi_drag_icon
-            .as_ref()
-            .or(compact_icon.as_ref())
-            .or(Some(&prepare_row))
-            .and_then(|icon| super::browser::drag_icon_with_count(icon, entries.len()))
+        if let Some((texture, hot_x, hot_y)) =
+            super::browser::drag_preview_icon(&prepare_row, &entries)
         {
             source.set_icon(Some(&texture), hot_x, hot_y);
-        } else {
-            let paintable = gtk::WidgetPaintable::new(compact_icon.as_ref().or(Some(&prepare_row)));
-            let (hot_x, hot_y) = if compact_icon.is_some() {
-                (0, 0)
-            } else {
-                (x.round() as i32, y.round() as i32)
-            };
-            source.set_icon(Some(&paintable), hot_x, hot_y);
         }
         super::browser::file_drag_content(&entries)
     });
