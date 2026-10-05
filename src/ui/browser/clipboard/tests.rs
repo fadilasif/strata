@@ -775,6 +775,32 @@ fn arming_without_an_active_drag_never_navigates() {
 }
 
 #[test]
+fn spring_load_navigates_into_the_drag_source_folder() {
+    crate::test_support::gtk_test(
+        "ui::browser::clipboard::tests::spring_load_navigates_into_the_drag_source_folder",
+        || {
+            // A drop into the folder the drag started from is always a noop, but
+            // hover navigation must still spring it open: the navigation layer
+            // intentionally knows nothing about drop validity.
+            let source = Location::local("/fixture/source");
+            let prepared = spring_load_target(&source);
+            let navigated = Rc::new(RefCell::new(Vec::new()));
+            let reached = navigated.clone();
+            prepared.state.schedule_spring_load_navigation(
+                || true,
+                source.clone(),
+                Duration::from_millis(20),
+                move |location| reached.borrow_mut().push(location),
+            );
+
+            pump_main_loop_until(Duration::from_secs(2), || !navigated.borrow().is_empty());
+
+            assert_eq!(*navigated.borrow(), vec![source]);
+        },
+    );
+}
+
+#[test]
 fn leaving_before_the_delay_cancels_spring_load_navigation() {
     crate::test_support::gtk_test(
         "ui::browser::clipboard::tests::leaving_before_the_delay_cancels_spring_load_navigation",

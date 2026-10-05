@@ -178,9 +178,10 @@ pub(crate) struct PreparedFileDrop {
     pub state: Rc<FileDropState>,
 }
 
-/// Hover delay before a folder opens while a file drag hovers over it. Matches the
-/// folder peek hover delay so spring-loaded folders feel consistent with peek.
-pub(crate) const SPRING_LOAD_NAVIGATE_DELAY: Duration = Duration::from_millis(1000);
+/// Hover delay before a folder opens while a file drag hovers over it: short
+/// enough to feel responsive, long enough to avoid opening folders the pointer
+/// only passes over.
+pub(crate) const SPRING_LOAD_NAVIGATE_DELAY: Duration = Duration::from_millis(750);
 
 /// Reuses one classification for cursor feedback and the eventual transfer.
 pub(crate) struct FileDropState {
@@ -377,21 +378,29 @@ impl FileDropState {
 }
 
 /// Arms spring-loaded navigation for a folder drop target while a file drag hovers
-/// over it, or cancels the pending navigation when the hovered drop is not
-/// acceptable. Call from drop-target enter, motion, and value handlers; call
-/// [`FileDropState::cancel_spring_load_navigation`] from leave and drop handlers.
+/// over it. Arming deliberately ignores drop validity: hovering the drag's own
+/// source folder can never accept the drop (a self-drop is a noop) but must still
+/// spring open, so only the offered payload decides. Drop highlighting and the
+/// eventual commit keep their own validity checks. Call from drop-target enter,
+/// motion, and value handlers; call [`FileDropState::cancel_spring_load_navigation`]
+/// from leave and drop handlers.
 pub(crate) fn arm_spring_load_navigation(
     drop_state: &Rc<FileDropState>,
     target: &gtk::DropTarget,
     navigate: &Rc<dyn Fn(Location)>,
 ) {
-    if file_drop_action(target, drop_state).is_empty() {
-        drop_state.cancel_spring_load_navigation();
-        return;
-    }
     let Some(destination) = drop_state.destination() else {
         return;
     };
+    let file_drag_offered = target.current_drop().is_some_and(|offered| {
+        offered
+            .formats()
+            .contains_type(gtk::gdk::FileList::static_type())
+    });
+    if !file_drag_offered {
+        drop_state.cancel_spring_load_navigation();
+        return;
+    }
     let drag_active = {
         let target = target.downgrade();
         move || {
