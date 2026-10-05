@@ -149,6 +149,13 @@ pub mod icons {
 const FONT_VERSION: &str = "2.304";
 const ICON_TEXTURE_PX: i32 = 96;
 const ICON_TEXTURE_CACHE_LIMIT: usize = 256;
+
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum IconContext {
+    #[default]
+    Interface,
+    Grid,
+}
 const JETBRAINS_MONO: &[u8] = include_bytes!("../data/fonts/JetBrainsMono[wght].ttf");
 
 pub const CHROME_ICON_PX: i32 = 16;
@@ -327,6 +334,7 @@ pub fn set_folder_decoration_icon(image: &gtk::Image, decoration: &str, color: &
         color,
         image.pixel_size(),
         image.scale_factor(),
+        IconContext::Interface,
     ) {
         image.set_paintable(Some(&texture));
     } else {
@@ -401,7 +409,13 @@ fn apply_primary_icon(image: &gtk::Image, name: &str, color: &str) {
             .max(image.pixel_size().saturating_mul(image.scale_factor()))
             .clamp(24, 768)
     };
-    if let Some(texture) = primary_icon_texture_at(name, color, texture_px, image.pixel_size()) {
+    if let Some(texture) = primary_icon_texture_at(
+        name,
+        color,
+        texture_px,
+        image.pixel_size(),
+        IconContext::Interface,
+    ) {
         image.set_paintable(Some(&texture));
     } else {
         image.set_icon_name(Some(name));
@@ -422,11 +436,12 @@ pub(crate) fn sized_icon_paintable(
     color: &str,
     logical_px: i32,
     scale_factor: i32,
+    context: IconContext,
 ) -> Option<gdk::Texture> {
     let texture_px = ICON_TEXTURE_PX
         .max(logical_px.saturating_mul(scale_factor))
         .clamp(24, 768);
-    primary_icon_texture_at(name, color, texture_px, logical_px)
+    primary_icon_texture_at(name, color, texture_px, logical_px, context)
 }
 
 fn primary_icon_texture_at(
@@ -434,6 +449,7 @@ fn primary_icon_texture_at(
     color: &str,
     texture_px: i32,
     logical_px: i32,
+    context: IconContext,
 ) -> Option<gdk::Texture> {
     let path = format!("/io/github/lgse/Strata/icons/scalable/actions/{name}.svg");
     let data = gio::resources_lookup_data(&path, gio::ResourceLookupFlags::NONE).ok()?;
@@ -447,27 +463,33 @@ fn primary_icon_texture_at(
         );
     }
     texture_from_svg(
-        &stroke_cache_name(name, logical_px),
+        &stroke_cache_name(name, logical_px, context),
         color,
         texture_px,
-        svg_at_texture_size(compensate_icon_strokes(source, logical_px), texture_px),
+        svg_at_texture_size(
+            compensate_icon_strokes(source, logical_px, context),
+            texture_px,
+        ),
     )
 }
 
-fn stroke_cache_name(name: &str, logical_px: i32) -> String {
-    if logical_px <= 64 {
-        name.to_owned()
-    } else {
-        format!("{name}:stroke-size:{logical_px}")
-    }
+fn stroke_cache_name(name: &str, logical_px: i32, context: IconContext) -> String {
+    let context = match context {
+        IconContext::Interface if logical_px <= 64 => return name.to_owned(),
+        IconContext::Interface => "interface",
+        IconContext::Grid => "grid",
+    };
+    format!("{name}:{context}:stroke-size:{logical_px}")
 }
 
-fn compensate_icon_strokes(source: String, logical_px: i32) -> String {
-    if logical_px <= 64 {
-        return source;
-    }
+fn compensate_icon_strokes(source: String, logical_px: i32, context: IconContext) -> String {
+    let weight = match context {
+        IconContext::Interface if logical_px <= 64 => return source,
+        IconContext::Interface => 1.0,
+        IconContext::Grid => 0.5,
+    };
     // Logical size controls perceived weight; raster resolution only controls sharpness.
-    let factor = (64.0 / f64::from(logical_px)).powf(0.35);
+    let factor = weight * (64.0 / f64::from(logical_px.max(64))).powf(0.35);
     source
         .replace(
             "stroke-width=\"2\"",
@@ -484,6 +506,7 @@ pub(crate) fn sized_folder_decoration_paintable(
     color: &str,
     logical_px: i32,
     scale_factor: i32,
+    context: IconContext,
 ) -> Option<gdk::Texture> {
     let texture_px = ICON_TEXTURE_PX
         .max(logical_px.saturating_mul(scale_factor))
@@ -501,11 +524,12 @@ pub(crate) fn sized_folder_decoration_paintable(
     );
     if let Some(emoji) = icons::custom_emoji(decoration) {
         return folder_emoji_texture(
-            &compensate_icon_strokes(source, logical_px),
+            &compensate_icon_strokes(source, logical_px, context),
             emoji,
             color,
             logical_px,
             texture_px,
+            context,
         );
     }
 
@@ -519,10 +543,14 @@ pub(crate) fn sized_folder_decoration_paintable(
     );
     source = source.replacen("</svg>", &format!("{overlay}</svg>"), 1);
     texture_from_svg(
-        &stroke_cache_name(&format!("folder-decoration:{decoration}"), logical_px),
+        &stroke_cache_name(
+            &format!("folder-decoration:{decoration}"),
+            logical_px,
+            context,
+        ),
         color,
         texture_px,
-        compensate_icon_strokes(source, logical_px),
+        compensate_icon_strokes(source, logical_px, context),
     )
 }
 
@@ -532,16 +560,17 @@ fn folder_emoji_texture(
     color: &str,
     logical_px: i32,
     texture_px: i32,
+    context: IconContext,
 ) -> Option<gdk::Texture> {
     let key = (
-        stroke_cache_name(&format!("folder-emoji:{emoji}"), logical_px),
+        stroke_cache_name(&format!("folder-emoji:{emoji}"), logical_px, context),
         color.to_owned(),
         texture_px,
     );
     if let Some(texture) = cached_icon_texture(&key) {
         return Some(texture);
     }
-    let folder = vector::surface(folder_source, ICON_TEXTURE_PX)?;
+    let folder = vector::surface(folder_source, texture_px)?;
     render_emoji_texture(key, emoji, 52.0, (44.0, 44.0), (48.0, 56.0), Some(&folder))
 }
 
@@ -567,12 +596,12 @@ fn render_emoji_texture(
 ) -> Option<gdk::Texture> {
     let surface = cairo::ImageSurface::create(cairo::Format::ARgb32, key.2, key.2).ok()?;
     let context = cairo::Context::new(&surface).ok()?;
-    let scale = f64::from(key.2) / f64::from(ICON_TEXTURE_PX);
-    context.scale(scale, scale);
     if let Some(background) = background {
         context.set_source_surface(background, 0.0, 0.0).ok()?;
         context.paint().ok()?;
     }
+    let scale = f64::from(key.2) / f64::from(ICON_TEXTURE_PX);
+    context.scale(scale, scale);
 
     let (layout, ink) = fitted_emoji_layout(&context, emoji, preferred_size, bounds.0, bounds.1);
     context.set_source_rgb(1.0, 1.0, 1.0);

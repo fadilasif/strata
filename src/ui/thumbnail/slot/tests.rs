@@ -8,6 +8,7 @@ fn resizing_refreshes_fallbacks_without_discarding_decoded_thumbnails() {
         "ui::thumbnail::slot::tests::resizing_refreshes_fallbacks_without_discarding_decoded_thumbnails",
         || {
             let slot = ThumbnailSlot::new(64);
+            slot.set_icon_context(crate::assets::IconContext::Grid);
             crate::ui::thumbnail::show_fallback_icon(&slot, crate::assets::icons::FOLDER, 64);
             let small = slot
                 .imp()

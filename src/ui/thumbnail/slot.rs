@@ -13,6 +13,7 @@ mod imp {
     #[derive(Default)]
     pub struct ThumbnailSlot {
         pub slot: Cell<i32>,
+        pub(crate) icon_context: Cell<crate::assets::IconContext>,
         pub content_inset: Cell<i32>,
         pub limit_fallback_height: Cell<bool>,
         pub fallback_scale: Cell<f64>,
@@ -72,6 +73,7 @@ mod imp {
                         &crate::assets::primary_icon_color(),
                         obj.icon_pixel_size(),
                         obj.scale_factor(),
+                        obj.icon_context(),
                     )
                 })
                 .or_else(|| self.texture.borrow().clone())
@@ -176,6 +178,17 @@ impl ThumbnailSlot {
         self.imp().slot.set(size);
         super::refresh_slot_icon(self);
         self.queue_resize();
+    }
+
+    pub(crate) fn icon_context(&self) -> crate::assets::IconContext {
+        self.imp().icon_context.get()
+    }
+
+    pub(crate) fn set_icon_context(&self, context: crate::assets::IconContext) {
+        if self.imp().icon_context.replace(context) != context {
+            super::refresh_slot_icon(self);
+            self.queue_draw();
+        }
     }
 
     pub(crate) fn icon_pixel_size(&self) -> i32 {

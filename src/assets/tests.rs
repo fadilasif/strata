@@ -7,14 +7,26 @@ pub(crate) fn primary_icon_paintable(name: &str) -> Option<gtk::gdk::Texture> {
 }
 
 pub(crate) fn custom_colored_icon_paintable(name: &str, color: &str) -> Option<gtk::gdk::Texture> {
-    super::sized_icon_paintable(name, color, 24, 1)
+    super::primary_icon_texture_at(
+        name,
+        color,
+        super::ICON_TEXTURE_PX,
+        24,
+        super::IconContext::Interface,
+    )
 }
 
 pub(crate) fn folder_decoration_paintable(
     decoration: &str,
     color: &str,
 ) -> Option<gtk::gdk::Texture> {
-    super::sized_folder_decoration_paintable(decoration, color, 24, 1)
+    super::sized_folder_decoration_paintable(
+        decoration,
+        color,
+        24,
+        1,
+        super::IconContext::Interface,
+    )
 }
 
 #[test]
@@ -60,11 +72,24 @@ fn icon_cache_distinguishes_logical_size_from_display_resolution() {
         "assets::tests::icon_cache_distinguishes_logical_size_from_display_resolution",
         || {
             let render = |name, color, size, scale| {
-                super::sized_icon_paintable(name, color, size, scale).expect("render icon")
+                super::sized_icon_paintable(name, color, size, scale, super::IconContext::Grid)
+                    .expect("render icon")
             };
             for name in [icons::FOLDER, icons::FILE_CODE, icons::FILE_SPREADSHEET] {
                 let small = render(name, "#123456", 64, 2);
                 let large = render(name, "#123456", 128, 1);
+                let interface = super::primary_icon_texture_at(
+                    name,
+                    "#123456",
+                    128,
+                    64,
+                    super::IconContext::Interface,
+                )
+                .expect("interface icon");
+                assert_ne!(
+                    small, interface,
+                    "grid weight must not leak into interface icons"
+                );
                 assert_ne!(
                     small, large,
                     "equal raster resolution must not share stroke weight"
@@ -74,8 +99,14 @@ fn icon_cache_distinguishes_logical_size_from_display_resolution() {
                 assert_ne!(large, render(name, "#abcdef", 128, 1));
             }
             let render_decoration = |decoration, size, scale| {
-                super::sized_folder_decoration_paintable(decoration, "#123456", size, scale)
-                    .expect("render decorated folder")
+                super::sized_folder_decoration_paintable(
+                    decoration,
+                    "#123456",
+                    size,
+                    scale,
+                    super::IconContext::Grid,
+                )
+                .expect("render decorated folder")
             };
             for decoration in [icons::PICTURES, "emoji:🚀"] {
                 let small = render_decoration(decoration, 64, 2);
@@ -138,6 +169,13 @@ fn cold_interface_icons_render_when_decoder_workers_cannot_start() {
                 assert!(
                     first.is::<gtk::gdk::MemoryTexture>(),
                     "raw pixels, not a loader-backed icon"
+                );
+                assert_eq!(
+                    first
+                        .clone()
+                        .downcast::<gtk::gdk::Texture>()
+                        .expect("interface texture"),
+                    primary_icon_paintable(name).expect("default interface weight"),
                 );
                 super::set_custom_colored_icon(&image, name, "#d46b31");
                 let recolored = image.paintable().expect("live color update renders");
