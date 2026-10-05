@@ -2413,7 +2413,7 @@ fn build_icons_view(context: &Rc<IconsContext>, model: &impl IsA<gio::ListModel>
             positions_for_setup.clone(),
             slow_click.clone(),
         );
-        install_icons_peek(
+        install_folder_peek(
             &card,
             item,
             peek_for_setup.clone(),
@@ -3629,7 +3629,7 @@ fn install_icons_content_hover(card: &gtk::Box) {
     card.add_controller(motion);
 }
 
-fn install_icons_peek(
+fn install_folder_peek(
     card: &impl IsA<gtk::Widget>,
     item: &gtk::ListItem,
     state: Option<Weak<super::browser::ViewState>>,

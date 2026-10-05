@@ -62,8 +62,8 @@ pub(super) use sidebar::build_sidebar;
 pub(super) const SIDEBAR_WIDTH: i32 = 201;
 pub(super) const MIN_SIDEBAR_WIDTH: i32 = 169;
 pub(super) fn sidebar_rail_button_size() -> i32 {
-    // Match the header toggle's scaled content plus 4px padding on each side.
-    (24.0 * PreferenceManager::shared().interface_scale()).round() as i32 + 8
+    // Match the compact header toggle; the rail supplies its own side gutters.
+    (24.0 * PreferenceManager::shared().interface_scale()).round() as i32
 }
 
 pub(super) fn sidebar_rail_width() -> i32 {
@@ -244,12 +244,8 @@ pub(super) fn present_target(
         .default_height(760)
         .build();
 
-    let content = composition::WindowContent::new(&window, &preference_manager);
-    content.bind(&window, &preference_manager);
-    let browser = content.browser.clone();
-    browser.connect_navigation_cleanup(window.upcast_ref());
-    schedule_after_first_paint(&window, &content.sidebar, &preference_manager);
-    content.connect_cleanup(&window);
+    let tabs = composition::TabWindow::new(&window, &preference_manager);
+    let browser = tabs.active_browser();
     window.present();
     crate::metrics::mark_window_presented();
     if auto_navigate {
@@ -275,7 +271,7 @@ fn schedule_after_first_paint(
     sidebar: &SidebarView,
     manager: &Rc<PreferenceManager>,
 ) {
-    let state = sidebar.state.clone();
+    let state = Rc::downgrade(&sidebar.state);
     let manager = manager.clone();
     let armed = Cell::new(false);
     window.connect_map(move |window| {
@@ -296,7 +292,11 @@ fn schedule_after_first_paint(
             }
             crate::metrics::mark_first_themed_frame();
             let state = state.clone();
-            glib::idle_add_local_once(move || state.rebuild());
+            glib::idle_add_local_once(move || {
+                if let Some(state) = state.upgrade() {
+                    state.rebuild();
+                }
+            });
             let manager = manager.clone();
             glib::idle_add_local_once(move || {
                 super::settings::maybe_run_due_update_check(&manager);
@@ -567,9 +567,9 @@ pub(super) fn type_to_search_query(
 }
 
 fn is_open_terminal_shortcut(key: gtk::gdk::Key, modifiers: gtk::gdk::ModifierType) -> bool {
-    modifiers.contains(gtk::gdk::ModifierType::CONTROL_MASK)
+    modifiers.contains(gtk::gdk::ModifierType::CONTROL_MASK | gtk::gdk::ModifierType::ALT_MASK)
         && !modifiers
-            .intersects(gtk::gdk::ModifierType::SHIFT_MASK | gtk::gdk::ModifierType::ALT_MASK)
+            .intersects(gtk::gdk::ModifierType::SHIFT_MASK | gtk::gdk::ModifierType::SUPER_MASK)
         && matches!(key, gtk::gdk::Key::t | gtk::gdk::Key::T)
 }
 
@@ -586,7 +586,7 @@ fn is_toggle_hidden_shortcut(key: gtk::gdk::Key, modifiers: gtk::gdk::ModifierTy
 const DEFAULT_ACCELS: &[(&str, &[&str])] = &[
     ("win.search", &["<Control>k"]),
     ("win.jump-folder", &["<Control><Shift>k"]),
-    ("win.open-terminal", &["<Primary>t"]),
+    ("win.open-terminal", &["<Primary><Alt>t"]),
     ("win.refresh", &["F5"]),
     ("win.toggle-arrow-scope", &["<Primary>backslash"]),
 ];
@@ -676,16 +676,42 @@ pub(super) fn vim_focus_direction(key: gtk::gdk::Key) -> Option<gtk::DirectionTy
 }
 
 pub(super) fn visible_modal_layer(window: &impl IsA<gtk::Window>) -> Option<gtk::Widget> {
-    let overlay = window.child().and_downcast::<gtk::Overlay>()?;
-    let mut child = overlay.first_child();
-    let mut topmost = None;
-    while let Some(widget) = child {
-        child = widget.next_sibling();
-        if widget.is_visible() && widget.has_css_class("app-modal-layer") {
-            topmost = Some(widget);
+    fn visible_layer(root: &gtk::Widget) -> Option<gtk::Widget> {
+        if !root.is_visible()
+            || !root.is_child_visible()
+            || root.opacity() == 0.0
+            || root.has_css_class("tab-strip")
+        {
+            return None;
         }
+        if root.has_css_class("app-modal-layer") {
+            return Some(root.clone());
+        }
+        let mut child = root.last_child();
+        while let Some(widget) = child {
+            child = widget.prev_sibling();
+            if root.has_css_class("tab-context") && !widget.has_css_class("app-modal-layer") {
+                continue;
+            }
+            if let Some(layer) = visible_layer(&widget) {
+                return Some(layer);
+            }
+        }
+        None
     }
-    topmost
+    let root = window.child()?;
+    if root.has_css_class("tab-window") {
+        visible_layer(&root)
+    } else {
+        let mut child = root.last_child();
+        while let Some(widget) = child {
+            child = widget.prev_sibling();
+            if widget.is_visible() && widget.has_css_class("app-modal-layer") {
+                return Some(widget);
+            }
+        }
+        None
+    }
 }
 
 pub(super) fn install_modal_focus_trap(window: &impl IsA<gtk::Window>) {
@@ -794,10 +820,13 @@ pub(super) fn build_appearance_menu(
         (&icons, BrowserMode::Icons),
         (&list, BrowserMode::List),
     ] {
-        let view = view.clone();
+        let view = view.downgrade();
         let preferences = preferences.clone();
         let popover_weak = popover_weak.clone();
         button.connect_clicked(move |_| {
+            let Some(view) = view.upgrade() else {
+                return;
+            };
             apply_browser_mode(&view, &preferences, mode);
             if let Some(popover) = popover_weak.upgrade() {
                 popover.popdown();
@@ -1241,6 +1270,10 @@ impl SidebarView {
     }
 
     pub(super) fn disconnect(&self) {
+        unparent_sidebar_popovers(self.state.widget.upcast_ref());
+        if let Some(monitor) = self.state.trash_monitor.take() {
+            monitor.cancel();
+        }
         self.bookmark_watch.take();
         for handler in self.handlers.take() {
             self.state.volume_monitor.disconnect(handler);
@@ -1250,6 +1283,18 @@ impl SidebarView {
         }
         if let Some((settings, handler)) = self.recent_setting_handler.take() {
             settings.disconnect(handler);
+        }
+    }
+}
+
+fn unparent_sidebar_popovers(widget: &gtk::Widget) {
+    let mut child = widget.first_child();
+    while let Some(current) = child {
+        child = current.next_sibling();
+        if widget.is::<gtk::Button>() && current.is::<gtk::Popover>() {
+            current.unparent();
+        } else {
+            unparent_sidebar_popovers(&current);
         }
     }
 }
@@ -1272,6 +1317,7 @@ impl SidebarState {
     fn rebuild(self: &Rc<Self>) {
         self.capture_scroll();
         while let Some(child) = self.widget.first_child() {
+            unparent_sidebar_popovers(&child);
             self.widget.remove(&child);
         }
         self.place_rows.borrow_mut().clear();
@@ -1880,12 +1926,14 @@ impl SidebarState {
         popover.add_css_class("folder-context-popover");
         popover.set_parent(&row);
         let properties_popover = popover.downgrade();
-        let properties_view = self.view.clone();
+        let properties_view = self.view.downgrade();
         properties.connect_clicked(move |_| {
             if let Some(popover) = properties_popover.upgrade() {
                 popover.popdown();
             }
-            properties_view.show_location_properties(&Location::uri("trash:///"));
+            if let Some(view) = properties_view.upgrade() {
+                view.show_location_properties(&Location::uri("trash:///"));
+            }
         });
         let unpin_popover = popover.downgrade();
         let weak_state = Rc::downgrade(self);
@@ -1898,12 +1946,14 @@ impl SidebarState {
             }
         });
         let empty_popover = popover.downgrade();
-        let empty_view = self.view.clone();
+        let empty_view = self.view.downgrade();
         empty.connect_clicked(move |_| {
             if let Some(popover) = empty_popover.upgrade() {
                 popover.popdown();
             }
-            empty_view.confirm_empty_trash();
+            if let Some(view) = empty_view.upgrade() {
+                view.confirm_empty_trash();
+            }
         });
         let context = gtk::GestureClick::new();
         context.set_button(3);
@@ -1947,15 +1997,17 @@ impl SidebarState {
         drag.connect_prepare(move |_, _, _| {
             Some(gtk::gdk::ContentProvider::for_value(&payload().to_value()))
         });
-        let dragged_row = row.clone();
-        drag.connect_drag_begin(move |_, _| {
-            dragged_row.add_css_class("dragging");
-            dragged_row.set_cursor_from_name(Some("grabbing"));
+        drag.connect_drag_begin(move |drag, _| {
+            if let Some(row) = drag.widget() {
+                row.add_css_class("dragging");
+                row.set_cursor_from_name(Some("grabbing"));
+            }
         });
-        let dragged_row = row.clone();
-        drag.connect_drag_end(move |_, _, _| {
-            dragged_row.remove_css_class("dragging");
-            dragged_row.set_cursor_from_name(Some("pointer"));
+        drag.connect_drag_end(move |drag, _, _| {
+            if let Some(row) = drag.widget() {
+                row.remove_css_class("dragging");
+                row.set_cursor_from_name(Some("pointer"));
+            }
         });
         row.add_controller(drag);
 
@@ -1969,12 +2021,14 @@ impl SidebarState {
             )
         });
         let weak_state = Rc::downgrade(self);
-        let target_row = row.clone();
-        drop.connect_drop(move |_, value, _, y| {
+        drop.connect_drop(move |target, value, _, y| {
             let Ok(source) = value.get::<String>() else {
                 return false;
             };
-            let after = y >= f64::from(target_row.height()) / 2.0;
+            let Some(row) = target.widget() else {
+                return false;
+            };
+            let after = y >= f64::from(row.height()) / 2.0;
             if let Some(state) = weak_state.upgrade() {
                 return on_drop(&state, &source, after);
             }
@@ -2262,12 +2316,14 @@ impl SidebarState {
         popover.set_parent(&row);
 
         let properties_popover = popover.downgrade();
-        let properties_view = self.view.clone();
+        let properties_view = self.view.downgrade();
         properties.connect_clicked(move |_| {
             if let Some(popover) = properties_popover.upgrade() {
                 popover.popdown();
             }
-            properties_view.show_location_properties(&properties_location);
+            if let Some(view) = properties_view.upgrade() {
+                view.show_location_properties(&properties_location);
+            }
         });
 
         let disconnect_popover = popover.downgrade();
@@ -2408,14 +2464,16 @@ impl SidebarState {
                 on_unpin(&state);
             }
         });
-        let properties_view = self.view.clone();
+        let properties_view = self.view.downgrade();
         let properties_location = location;
         let properties_popover = popover.downgrade();
         properties.connect_clicked(move |_| {
             if let Some(popover) = properties_popover.upgrade() {
                 popover.popdown();
             }
-            properties_view.show_location_properties(&properties_location);
+            if let Some(view) = properties_view.upgrade() {
+                view.show_location_properties(&properties_location);
+            }
         });
         let context = gtk::GestureClick::new();
         context.set_button(3);
@@ -2619,13 +2677,16 @@ fn install_sidebar_file_drop(
             row_toggle_drop_highlight(&row, false);
         }
     });
-    let view = view.clone();
+    let view = view.downgrade();
     let highlighted_row = row.downgrade();
     drop.connect_drop(move |target, value, _, _| {
         drop_state.cancel_spring_load_navigation();
         if let Some(row) = highlighted_row.upgrade() {
             row_toggle_drop_highlight(&row, false);
         }
+        let Some(view) = view.upgrade() else {
+            return false;
+        };
         let Some(sources) = locations_from_file_list_value(value) else {
             return false;
         };
@@ -2665,9 +2726,12 @@ fn install_sidebar_trash_drop(view: &BrowserView, row: &impl IsA<gtk::Widget>) {
             offered.status(target.actions(), trash_file_drop_action(target));
         }
     });
-    let view = view.clone();
+    let view = view.downgrade();
     drop.connect_drop(move |_, value, _, _| {
-        locations_from_file_list_value(value).is_some_and(|sources| view.trash_file_drop(sources))
+        view.upgrade().is_some_and(|view| {
+            locations_from_file_list_value(value)
+                .is_some_and(|sources| view.trash_file_drop(sources))
+        })
     });
     row.add_controller(drop);
 }

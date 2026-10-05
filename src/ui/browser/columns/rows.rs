@@ -13,7 +13,7 @@ use crate::ui::{
             drag_preview_icon, file_drag_content, file_drag_hover_target, file_drop_action,
             file_drop_commit, locations_from_file_list_value, prepare_file_drop_target,
         },
-        collection::{ViewMap, activate_recursive_search_result, cancel_source},
+        collection::{ViewMap, activate_recursive_search_result},
         entry::{
             entry_icon, entry_responds_to_preview_click, metadata_needs_fill, model_display_name,
         },
@@ -132,38 +132,6 @@ pub(super) fn column_rows(
         row.append(&icon);
         row.append(&middle);
         row.append(&chevron);
-        let motion = gtk::EventControllerMotion::new();
-        let list_item = item.downgrade();
-        let weak_state_for_enter = weak_state.clone();
-        let map_for_enter = map_for_hover.clone();
-        motion.connect_enter(move |controller, _, _| {
-            let Some(item) = list_item.upgrade() else {
-                return;
-            };
-            if let Some(state) = weak_state_for_enter.upgrade() {
-                let source_position = map_for_enter.source_position(item.position());
-                let entry =
-                    source_position.and_then(|position| state.browser.entry_at(depth, position));
-                if let Some(entry) = entry {
-                    if entry.is_directory() {
-                        if let Some(anchor) = controller.widget() {
-                            state.schedule_peek(depth, entry.location, anchor);
-                        }
-                    } else {
-                        cancel_source(&state.pending_peek);
-                        state.browser.close_peek();
-                    }
-                }
-            }
-        });
-        let weak_state_for_leave = weak_state.clone();
-        motion.connect_leave(move |_| {
-            if let Some(state) = weak_state_for_leave.upgrade() {
-                state.schedule_close_peek();
-            }
-        });
-        row.add_controller(motion);
-
         item.set_child(Some(&row));
         let pending_activation = Rc::new(RefCell::new(None::<PendingPointerActivation>));
         let was_selected = Rc::new(Cell::new(false));
@@ -423,7 +391,12 @@ pub(super) fn column_rows(
             rename_position_for_press.set(None);
             was_selected_for_press.set(false);
             press_moved_for_press.set(false);
-            press_origin_for_press.set((x, y));
+            // Focusing a parent can scroll the row beneath a stationary pointer.
+            let press = gesture
+                .current_event()
+                .and_then(|event| event.position())
+                .unwrap_or((x, y));
+            press_origin_for_press.set(press);
             if let Some(state) = weak_state_for_click.upgrade() {
                 state.cancel_click_rename();
             }
@@ -533,7 +506,7 @@ pub(super) fn column_rows(
                         pending_activation_for_press.replace(Some(PendingPointerActivation {
                             position,
                             location,
-                            press: (x, y),
+                            press,
                             moved: false,
                             kind,
                         }));
@@ -597,7 +570,7 @@ pub(super) fn column_rows(
                         pending_activation_for_press.replace(Some(PendingPointerActivation {
                             position: source_position,
                             location: entry.location.clone(),
-                            press: (x, y),
+                            press,
                             moved: false,
                             kind: PendingActivationKind::Standard { preview },
                         }));
@@ -605,29 +578,33 @@ pub(super) fn column_rows(
                 }
             }
         });
-        selection_click.connect_update(move |gesture, sequence| {
-            if let (Some(pending), Some((x, y)), Some(widget)) = (
-                pending_activation_for_motion.borrow_mut().as_mut(),
-                gesture.point(sequence),
-                gesture.widget(),
-            ) {
-                pending.update(x, y, widget.settings().gtk_dnd_drag_threshold());
+        selection_click.connect_update(move |gesture, _| {
+            let Some((x, y)) = gesture.current_event().and_then(|event| event.position()) else {
+                return;
+            };
+            let Some(widget) = gesture.widget() else {
+                return;
+            };
+            let threshold = widget.settings().gtk_dnd_drag_threshold();
+            if let Some(pending) = pending_activation_for_motion.borrow_mut().as_mut() {
+                pending.update(x, y, threshold);
             }
-            if let (Some((x, y)), Some(widget)) = (gesture.point(sequence), gesture.widget()) {
-                let origin = press_origin_for_update.get();
-                if crate::ui::pointer::exceeds_drag_threshold(
-                    origin,
-                    (x, y),
-                    widget.settings().gtk_dnd_drag_threshold(),
-                ) {
-                    press_moved_for_update.set(true);
-                }
+            if crate::ui::pointer::exceeds_drag_threshold(
+                press_origin_for_update.get(),
+                (x, y),
+                threshold,
+            ) {
+                press_moved_for_update.set(true);
             }
         });
         let weak_state_for_release = weak_state.clone();
         let search_results_for_release = search_results_for_factory.clone();
         selection_click.connect_released(move |gesture, count, x, y| {
             let pending = pending_activation_for_release.take();
+            let (x, y) = gesture
+                .current_event()
+                .and_then(|event| event.position())
+                .unwrap_or((x, y));
             if pending.is_none()
                 && count == 1
                 && !press_moved_for_release.get()

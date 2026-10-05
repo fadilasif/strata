@@ -1158,6 +1158,39 @@ impl ViewState {
         }
     }
 
+    pub(super) fn play_pending_delete_dissolve(self: &Rc<Self>, succeeded: bool) {
+        self.delete_dissolve_request.set(None);
+        let Some((depth, dissolve)) = self.pending_delete_dissolve.take() else {
+            return;
+        };
+        self.deferred_delete_empty_depth.set(Some(depth));
+        let weak = Rc::downgrade(self);
+        glib::idle_add_local_once(move || {
+            let Some(state) = weak.upgrade() else {
+                return;
+            };
+            if succeeded {
+                let weak = Rc::downgrade(&state);
+                dissolve.play(move || {
+                    if let Some(state) = weak.upgrade() {
+                        state.finish_delete_animation(depth);
+                    }
+                });
+            } else {
+                state.finish_delete_animation(depth);
+            }
+        });
+    }
+
+    pub(super) fn settle_pending_delete_dissolve(&self) {
+        self.delete_dissolve_request.set(None);
+        let Some((depth, _)) = self.pending_delete_dissolve.take() else {
+            return;
+        };
+        self.deferred_delete_empty_depth.set(Some(depth));
+        self.finish_delete_animation(depth);
+    }
+
     fn finish_delete_animation(&self, depth: usize) {
         if self.deferred_delete_empty_depth.get() != Some(depth) {
             return;

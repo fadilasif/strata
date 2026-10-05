@@ -8,7 +8,7 @@ import time
 import pytest
 
 from harness.browser import ENTRY_ROLES
-from harness.modes import ALL_MODES
+from harness.modes import ALL_MODES, SINGLE_PANE_MODES
 
 
 def _scroll_pane(node):
@@ -304,9 +304,28 @@ def metadata_drag_origin(strata, source, edge=None):
     return bounds.x + 4, y
 
 
-@pytest.mark.preferences(folder_peeking=True, browser_mode="icons")
-def test_starting_a_drag_cancels_a_folder_peek(strata):
-    """#621: a drag beginning must cancel any open folder peek in Icons view."""
+@pytest.mark.preferences(folder_peeking=True, browser_mode="columns", columns_mirror_selection=False)
+def test_columns_never_open_hover_peeks_even_with_the_preference_enabled(strata):
+    folder = strata.entry("documents")
+    strata.pointer.move_to(*folder.screen_bounds().center)
+    deadline = time.monotonic() + 1.2
+    seen_peek = False
+
+    def observed_hover():
+        nonlocal seen_peek
+        seen_peek = seen_peek or strata.peek() is not None
+        return time.monotonic() >= deadline
+
+    strata.wait(observed_hover, "a sustained column hover to remain free of folder peeks")
+    assert not seen_peek, "Miller columns must ignore the folder-peeking preference"
+    strata.open_directory("documents")
+    strata.entry("notes.txt", directory="documents")
+
+
+@pytest.mark.preferences(folder_peeking=True)
+@pytest.mark.parametrize("mode", SINGLE_PANE_MODES)
+def test_starting_a_drag_cancels_a_folder_peek(strata, mode):
+    """#621: beginning a drag must cancel any open folder peek."""
 
     pane = strata.pane()
     pane_bounds = pane.screen_bounds()
@@ -315,7 +334,7 @@ def test_starting_a_drag_cancels_a_folder_peek(strata):
     folder = strata.entry("archive")
     start = strata.pointer.drag_origin(folder)
     strata.pointer.move_to(*start)
-    deadline = time.monotonic() + 0.6
+    deadline = time.monotonic() + 0.2
     while time.monotonic() < deadline:
         assert strata.peek() is None, "a brief hover must not open a folder peek"
         time.sleep(0.02)
