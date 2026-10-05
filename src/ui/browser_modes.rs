@@ -3861,8 +3861,19 @@ fn install_list_drag_drop(
         target: drop,
         state: drop_state,
     } = super::browser::prepare_file_drop_target(dest_for_row);
+    // Spring-loaded folders: hovering a folder during a file drag navigates into
+    // it after a delay without disturbing the current selection.
+    let spring_navigate: Rc<dyn Fn(Location)> = {
+        let browser = browser.clone();
+        Rc::new(move |location| {
+            if let Some(browser) = browser.upgrade() {
+                browser.navigate_location(location, false);
+            }
+        })
+    };
     let highlighted_row = row.downgrade();
     let state_for_enter = drop_state.clone();
+    let navigate_for_enter = spring_navigate.clone();
     drop.connect_enter(move |target, _, _| {
         let action = super::browser::file_drop_action(target, &state_for_enter);
         if let Some(row) = highlighted_row.upgrade() {
@@ -3872,10 +3883,12 @@ fn install_list_drag_drop(
                 row.add_css_class("drop-destination");
             }
         }
+        super::browser::arm_spring_load_navigation(&state_for_enter, target, &navigate_for_enter);
         action
     });
     let highlighted_row = row.downgrade();
     let state_for_motion = drop_state.clone();
+    let navigate_for_motion = spring_navigate.clone();
     drop.connect_motion(move |target, _, _| {
         let action = super::browser::file_drop_action(target, &state_for_motion);
         if let Some(row) = highlighted_row.upgrade() {
@@ -3885,10 +3898,12 @@ fn install_list_drag_drop(
                 row.add_css_class("drop-destination");
             }
         }
+        super::browser::arm_spring_load_navigation(&state_for_motion, target, &navigate_for_motion);
         action
     });
     let highlighted_row = row.downgrade();
     let state_for_value = drop_state.clone();
+    let navigate_for_value = spring_navigate.clone();
     drop.connect_value_notify(move |target| {
         if target.current_drop().is_none() {
             return;
@@ -3901,9 +3916,12 @@ fn install_list_drag_drop(
                 row.add_css_class("drop-destination");
             }
         }
+        super::browser::arm_spring_load_navigation(&state_for_value, target, &navigate_for_value);
     });
     let highlighted_row = row.downgrade();
+    let state_for_leave = drop_state.clone();
     drop.connect_leave(move |_| {
+        state_for_leave.cancel_spring_load_navigation();
         if let Some(row) = highlighted_row.upgrade() {
             row.remove_css_class("drop-destination");
         }
@@ -3936,6 +3954,7 @@ fn install_list_drag_drop(
         if let Some(row) = dropped_row.upgrade() {
             row.remove_css_class("drop-destination");
         }
+        drop_state.cancel_spring_load_navigation();
         let Some(destination) = drop_state.destination() else {
             return false;
         };

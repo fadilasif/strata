@@ -22,7 +22,11 @@ use crate::ui::{
     browser_modes::BrowserMode,
     modal::slide_in_down,
 };
-use crate::{model::FileEntry, services::SearchItem};
+use crate::{
+    model::{FileEntry, Location},
+    services::SearchItem,
+    ui::browser::arm_spring_load_navigation,
+};
 use gtk::{glib, prelude::*};
 use std::{
     cell::{Cell, RefCell},
@@ -273,8 +277,19 @@ pub(super) fn column_rows(
                 target: drop,
                 state: drop_state,
             } = prepare_file_drop_target(dest_for_row);
+            // Spring-loaded folders: hovering a folder during a file drag opens it
+            // after a delay, mirroring single-click navigation without selection.
+            let spring_navigate: Rc<dyn Fn(Location)> = {
+                let weak_state = weak_state.clone();
+                Rc::new(move |location| {
+                    if let Some(state) = weak_state.upgrade() {
+                        state.browser.descend(depth, location);
+                    }
+                })
+            };
             let highlighted_row = row.downgrade();
             let state_for_enter = drop_state.clone();
+            let navigate_for_enter = spring_navigate.clone();
             drop.connect_enter(move |target, _, _| {
                 let action = file_drop_action(target, &state_for_enter);
                 if let Some(row) = highlighted_row.upgrade() {
@@ -284,10 +299,12 @@ pub(super) fn column_rows(
                         row.add_css_class("drop-destination");
                     }
                 }
+                arm_spring_load_navigation(&state_for_enter, target, &navigate_for_enter);
                 action
             });
             let highlighted_row = row.downgrade();
             let state_for_motion = drop_state.clone();
+            let navigate_for_motion = spring_navigate.clone();
             drop.connect_motion(move |target, _, _| {
                 let action = file_drop_action(target, &state_for_motion);
                 if let Some(row) = highlighted_row.upgrade() {
@@ -297,10 +314,12 @@ pub(super) fn column_rows(
                         row.add_css_class("drop-destination");
                     }
                 }
+                arm_spring_load_navigation(&state_for_motion, target, &navigate_for_motion);
                 action
             });
             let highlighted_row = row.downgrade();
             let state_for_value = drop_state.clone();
+            let navigate_for_value = spring_navigate.clone();
             drop.connect_value_notify(move |target| {
                 if target.current_drop().is_none() {
                     return;
@@ -313,9 +332,12 @@ pub(super) fn column_rows(
                         row.add_css_class("drop-destination");
                     }
                 }
+                arm_spring_load_navigation(&state_for_value, target, &navigate_for_value);
             });
             let highlighted_row = row.downgrade();
+            let state_for_leave = drop_state.clone();
             drop.connect_leave(move |_| {
+                state_for_leave.cancel_spring_load_navigation();
                 if let Some(row) = highlighted_row.upgrade() {
                     row.remove_css_class("drop-destination");
                 }
@@ -347,6 +369,7 @@ pub(super) fn column_rows(
                 let Some(dropped_row) = dropped_row.upgrade() else {
                     return false;
                 };
+                drop_state.cancel_spring_load_navigation();
                 dropped_row.remove_css_class("drop-destination");
                 let Some(state) = weak_state_for_drop.upgrade() else {
                     return false;

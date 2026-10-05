@@ -24,9 +24,9 @@ use crate::{
 
 use super::{
     browser::{
-        BrowserView, PeekBehavior, PinStatus, PreparedFileDrop, WeakBrowserView, file_drop_action,
-        file_drop_commit, locations_from_file_list_value, prepare_file_drop_target,
-        show_error_dialog,
+        BrowserView, PeekBehavior, PinStatus, PreparedFileDrop, WeakBrowserView,
+        arm_spring_load_navigation, file_drop_action, file_drop_commit,
+        locations_from_file_list_value, prepare_file_drop_target, show_error_dialog,
     },
     browser_modes::{BrowserDensity, BrowserMode},
     controls::{ModalTone, focus_button, message_dialog_description, message_dialog_layout},
@@ -2552,12 +2552,43 @@ fn install_sidebar_file_drop(
         move || Some(destination.clone())
     });
     drop.set_propagation_phase(gtk::PropagationPhase::Capture);
+    // Spring-loaded folders: hovering a place during a file drag navigates to it
+    // after a delay without disturbing the current selection.
+    let spring_navigate: Rc<dyn Fn(Location)> = {
+        let view = view.clone();
+        Rc::new(move |location| {
+            view.browser().navigate_location(location, false);
+        })
+    };
     let state_for_enter = drop_state.clone();
-    drop.connect_enter(move |target, _, _| file_drop_action(target, &state_for_enter));
+    let navigate_for_enter = spring_navigate.clone();
+    drop.connect_enter(move |target, _, _| {
+        let action = file_drop_action(target, &state_for_enter);
+        arm_spring_load_navigation(&state_for_enter, target, &navigate_for_enter);
+        action
+    });
     let state_for_motion = drop_state.clone();
-    drop.connect_motion(move |target, _, _| file_drop_action(target, &state_for_motion));
+    let navigate_for_motion = spring_navigate.clone();
+    drop.connect_motion(move |target, _, _| {
+        let action = file_drop_action(target, &state_for_motion);
+        arm_spring_load_navigation(&state_for_motion, target, &navigate_for_motion);
+        action
+    });
+    let state_for_value = drop_state.clone();
+    let navigate_for_value = spring_navigate.clone();
+    drop.connect_value_notify(move |target| {
+        if target.current_drop().is_none() {
+            return;
+        }
+        arm_spring_load_navigation(&state_for_value, target, &navigate_for_value);
+    });
+    let state_for_leave = drop_state.clone();
+    drop.connect_leave(move |_| {
+        state_for_leave.cancel_spring_load_navigation();
+    });
     let view = view.clone();
     drop.connect_drop(move |target, value, _, _| {
+        drop_state.cancel_spring_load_navigation();
         let Some(sources) = locations_from_file_list_value(value) else {
             return false;
         };

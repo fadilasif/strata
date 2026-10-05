@@ -710,3 +710,188 @@ fn shell_escape_path_preserves_newlines_and_single_quotes() {
         "'/tmp/line\nbob'\\''s notes'"
     );
 }
+
+fn pump_main_loop_until(timeout: Duration, condition: impl Fn() -> bool) {
+    let deadline = std::time::Instant::now() + timeout;
+    let _waker = glib::timeout_add_local_once(timeout, || {});
+    while !condition() && std::time::Instant::now() < deadline {
+        glib::MainContext::default().iteration(true);
+    }
+}
+
+fn spring_load_target(destination: &Location) -> PreparedFileDrop {
+    let destination = destination.clone();
+    prepare_file_drop_target(move || Some(destination.clone()))
+}
+
+#[test]
+fn spring_load_navigates_after_hover_delay_during_active_drag() {
+    crate::test_support::gtk_test(
+        "ui::browser::clipboard::tests::spring_load_navigates_after_hover_delay_during_active_drag",
+        || {
+            let destination = Location::local("/fixture/spring");
+            let prepared = spring_load_target(&destination);
+            let navigated = Rc::new(RefCell::new(Vec::new()));
+            let reached = navigated.clone();
+            prepared.state.schedule_spring_load_navigation(
+                || true,
+                destination.clone(),
+                Duration::from_millis(20),
+                move |location| reached.borrow_mut().push(location),
+            );
+
+            pump_main_loop_until(Duration::from_secs(2), || !navigated.borrow().is_empty());
+
+            assert_eq!(*navigated.borrow(), vec![destination]);
+        },
+    );
+}
+
+#[test]
+fn arming_without_an_active_drag_never_navigates() {
+    crate::test_support::gtk_test(
+        "ui::browser::clipboard::tests::arming_without_an_active_drag_never_navigates",
+        || {
+            let destination = Location::local("/fixture/spring");
+            let prepared = spring_load_target(&destination);
+            let navigated = Rc::new(RefCell::new(Vec::new()));
+            let reached = navigated.clone();
+            let navigate: Rc<dyn Fn(Location)> =
+                Rc::new(move |location| reached.borrow_mut().push(location));
+            // No drag is over the target, so the hovered drop is not acceptable
+            // and arming must be a no-op rather than scheduling navigation.
+            arm_spring_load_navigation(&prepared.state, &prepared.target, &navigate);
+
+            pump_main_loop_until(Duration::from_millis(300), || {
+                !navigated.borrow().is_empty()
+            });
+
+            assert!(
+                navigated.borrow().is_empty(),
+                "arming without an active drag must not navigate"
+            );
+        },
+    );
+}
+
+#[test]
+fn leaving_before_the_delay_cancels_spring_load_navigation() {
+    crate::test_support::gtk_test(
+        "ui::browser::clipboard::tests::leaving_before_the_delay_cancels_spring_load_navigation",
+        || {
+            let destination = Location::local("/fixture/spring");
+            let prepared = spring_load_target(&destination);
+            let navigated = Rc::new(RefCell::new(Vec::new()));
+            let reached = navigated.clone();
+            prepared.state.schedule_spring_load_navigation(
+                || true,
+                destination,
+                Duration::from_millis(50),
+                move |location| reached.borrow_mut().push(location),
+            );
+            prepared.state.cancel_spring_load_navigation();
+
+            pump_main_loop_until(Duration::from_millis(300), || {
+                !navigated.borrow().is_empty()
+            });
+
+            assert!(
+                navigated.borrow().is_empty(),
+                "leaving the folder must cancel the pending navigation"
+            );
+        },
+    );
+}
+
+#[test]
+fn hover_without_an_active_drag_does_not_navigate() {
+    crate::test_support::gtk_test(
+        "ui::browser::clipboard::tests::hover_without_an_active_drag_does_not_navigate",
+        || {
+            let destination = Location::local("/fixture/spring");
+            let prepared = spring_load_target(&destination);
+            let navigated = Rc::new(RefCell::new(Vec::new()));
+            let reached = navigated.clone();
+            prepared.state.schedule_spring_load_navigation(
+                || false,
+                destination,
+                Duration::from_millis(20),
+                move |location| reached.borrow_mut().push(location),
+            );
+
+            pump_main_loop_until(Duration::from_millis(300), || {
+                !navigated.borrow().is_empty()
+            });
+
+            assert!(
+                navigated.borrow().is_empty(),
+                "plain hover without a drag must not navigate"
+            );
+        },
+    );
+}
+
+#[test]
+fn spring_load_keeps_the_drag_alive_and_fires_exactly_once() {
+    crate::test_support::gtk_test(
+        "ui::browser::clipboard::tests::spring_load_keeps_the_drag_alive_and_fires_exactly_once",
+        || {
+            let destination = Location::local("/fixture/spring");
+            let prepared = spring_load_target(&destination);
+            let navigated = Rc::new(RefCell::new(Vec::new()));
+            let reached = navigated.clone();
+            prepared.state.schedule_spring_load_navigation(
+                || true,
+                destination.clone(),
+                Duration::from_millis(20),
+                move |location| reached.borrow_mut().push(location),
+            );
+
+            pump_main_loop_until(Duration::from_secs(2), || !navigated.borrow().is_empty());
+            pump_main_loop_until(Duration::from_millis(200), || navigated.borrow().len() > 1);
+
+            assert_eq!(*navigated.borrow(), vec![destination.clone()]);
+            assert_eq!(
+                prepared.state.destination(),
+                Some(destination),
+                "navigation must leave the drop target usable for the eventual drop"
+            );
+        },
+    );
+}
+
+#[test]
+fn hovering_another_folder_replaces_the_pending_navigation() {
+    crate::test_support::gtk_test(
+        "ui::browser::clipboard::tests::hovering_another_folder_replaces_the_pending_navigation",
+        || {
+            let first = Location::local("/fixture/first");
+            let second = Location::local("/fixture/second");
+            let hovered = Rc::new(RefCell::new(first.clone()));
+            let prepared = {
+                let hovered = hovered.clone();
+                prepare_file_drop_target(move || Some(hovered.borrow().clone()))
+            };
+            let navigated = Rc::new(RefCell::new(Vec::new()));
+            let reached_first = navigated.clone();
+            prepared.state.schedule_spring_load_navigation(
+                || true,
+                first,
+                Duration::from_millis(50),
+                move |location| reached_first.borrow_mut().push(location),
+            );
+            *hovered.borrow_mut() = second.clone();
+            let reached_second = navigated.clone();
+            prepared.state.schedule_spring_load_navigation(
+                || true,
+                second.clone(),
+                Duration::from_millis(20),
+                move |location| reached_second.borrow_mut().push(location),
+            );
+
+            pump_main_loop_until(Duration::from_secs(2), || !navigated.borrow().is_empty());
+
+            assert_eq!(*navigated.borrow(), vec![second]);
+        },
+    );
+}

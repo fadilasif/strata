@@ -18,6 +18,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::rc::{Rc, Weak};
+use std::time::Duration;
 
 const DRAG_PROXY_MAX_SIZE: f64 = 72.0;
 const DRAG_PROXY_MIN_SIZE: f64 = 32.0;
@@ -177,12 +178,23 @@ pub(crate) struct PreparedFileDrop {
     pub state: Rc<FileDropState>,
 }
 
+/// Hover delay before a folder opens while a file drag hovers over it. Matches the
+/// folder peek hover delay so spring-loaded folders feel consistent with peek.
+pub(crate) const SPRING_LOAD_NAVIGATE_DELAY: Duration = Duration::from_millis(1000);
+
 /// Reuses one classification for cursor feedback and the eventual transfer.
 pub(crate) struct FileDropState {
     destination: Rc<dyn Fn() -> Option<Location>>,
     last_override: Cell<DropOverride>,
     sources: RefCell<Option<Rc<[Location]>>>,
     classification: RefCell<Option<DropClassification>>,
+    spring_load: RefCell<Option<SpringLoadPending>>,
+}
+
+struct SpringLoadPending {
+    destination: Location,
+    navigate: Option<Box<dyn FnOnce(Location)>>,
+    timer: glib::SourceId,
 }
 
 struct DropClassification {
@@ -206,11 +218,65 @@ impl FileDropState {
             last_override: Cell::new(DropOverride::None),
             sources: RefCell::new(None),
             classification: RefCell::new(None),
+            spring_load: RefCell::new(None),
         }
     }
 
     pub(crate) fn destination(&self) -> Option<Location> {
         (self.destination)()
+    }
+
+    /// Arms spring-loaded navigation into `destination` while a file drag hovers over
+    /// this drop target. `drag_active` must report whether the drag is still over this
+    /// target; re-arming for the same destination keeps the running timer so motion
+    /// events cannot postpone navigation, while a different destination replaces it.
+    /// Firing re-resolves the live destination and navigates only when it still
+    /// matches, leaving the drag operation itself untouched so dropping still works.
+    pub(crate) fn schedule_spring_load_navigation(
+        self: &Rc<Self>,
+        drag_active: impl Fn() -> bool + 'static,
+        destination: Location,
+        delay: Duration,
+        navigate: impl FnOnce(Location) + 'static,
+    ) {
+        if self
+            .spring_load
+            .borrow()
+            .as_ref()
+            .is_some_and(|pending| pending.destination == destination)
+        {
+            return;
+        }
+        self.cancel_spring_load_navigation();
+        let state = Rc::downgrade(self);
+        let timer = glib::timeout_add_local_once(delay, move || {
+            let Some(state) = state.upgrade() else {
+                return;
+            };
+            let Some(pending) = state.spring_load.borrow_mut().take() else {
+                return;
+            };
+            if !drag_active() {
+                return;
+            }
+            if state.destination().as_ref() != Some(&pending.destination) {
+                return;
+            }
+            if let Some(navigate) = pending.navigate {
+                navigate(pending.destination);
+            }
+        });
+        *self.spring_load.borrow_mut() = Some(SpringLoadPending {
+            destination,
+            navigate: Some(Box::new(navigate)),
+            timer,
+        });
+    }
+
+    pub(crate) fn cancel_spring_load_navigation(&self) {
+        if let Some(pending) = self.spring_load.borrow_mut().take() {
+            pending.timer.remove();
+        }
     }
 
     fn reset(&self) {
@@ -308,6 +374,39 @@ impl FileDropState {
         });
         (relation, is_noop)
     }
+}
+
+/// Arms spring-loaded navigation for a folder drop target while a file drag hovers
+/// over it, or cancels the pending navigation when the hovered drop is not
+/// acceptable. Call from drop-target enter, motion, and value handlers; call
+/// [`FileDropState::cancel_spring_load_navigation`] from leave and drop handlers.
+pub(crate) fn arm_spring_load_navigation(
+    drop_state: &Rc<FileDropState>,
+    target: &gtk::DropTarget,
+    navigate: &Rc<dyn Fn(Location)>,
+) {
+    if file_drop_action(target, drop_state).is_empty() {
+        drop_state.cancel_spring_load_navigation();
+        return;
+    }
+    let Some(destination) = drop_state.destination() else {
+        return;
+    };
+    let drag_active = {
+        let target = target.downgrade();
+        move || {
+            target
+                .upgrade()
+                .is_some_and(|target| target.current_drop().is_some())
+        }
+    };
+    let navigate = navigate.clone();
+    drop_state.schedule_spring_load_navigation(
+        drag_active,
+        destination,
+        SPRING_LOAD_NAVIGATE_DELAY,
+        move |location| navigate(location),
+    );
 }
 
 pub(crate) fn prepare_file_drop_target(
