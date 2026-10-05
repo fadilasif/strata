@@ -239,8 +239,6 @@ pub(super) fn column_rows(
                 target: drop,
                 state: drop_state,
             } = prepare_file_drop_target(dest_for_row);
-            // Spring-loaded folders: hovering a folder during a file drag opens it
-            // after a delay, mirroring single-click navigation without selection.
             let spring_navigate: Rc<dyn Fn(Location)> = {
                 let weak_state = weak_state.clone();
                 Rc::new(move |location| {

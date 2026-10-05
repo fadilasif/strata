@@ -3833,8 +3833,6 @@ fn install_list_drag_drop(
         target: drop,
         state: drop_state,
     } = super::browser::prepare_file_drop_target(dest_for_row);
-    // Spring-loaded folders: hovering a folder during a file drag navigates into
-    // it after a delay without disturbing the current selection.
     let spring_navigate: Rc<dyn Fn(Location)> = {
         let browser = browser.clone();
         Rc::new(move |location| {

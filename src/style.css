@@ -5547,8 +5547,6 @@ menubutton.icons-thumbnail-menu > button:focus-visible {
   transition: none;
 }
 
-/* Drop targets reuse the canonical keyboard-selection border: 1px accent
-   outline at -1px offset on the frame's 6px radius. */
 .file-icons > child .icons-card.drop-destination .icons-card-icon-frame,
 .file-icons > child .icons-card:drop(active) .icons-card-icon-frame {
   background: alpha(@strata_highlight, 0.82);
@@ -5688,8 +5686,6 @@ menubutton.icons-thumbnail-menu > button:focus-visible {
   outline-offset: -2px;
 }
 
-/* Drop targets reuse the canonical keyboard-selection border: 1px accent
-   outline at -1px offset on a 6px radius, matching .file-row.keyboard-cursor. */
 .list-row.drop-destination,
 .list-row:drop(active) {
   background: alpha(@strata_highlight, 0.82);

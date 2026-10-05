@@ -23,8 +23,6 @@ use std::time::Duration;
 const DRAG_PROXY_PADDING: f64 = 3.0;
 const DRAG_PROXY_STACK_OFFSET: f64 = 5.0;
 
-/// Logical display size shared by single-item drag icons and the multi-item
-/// pile so the pair stays visually consistent.
 const DRAG_PREVIEW_ICON_PX: f64 = 32.0;
 
 struct DragPreviewLayout {
@@ -36,10 +34,6 @@ struct DragPreviewLayout {
     hotspot: (i32, i32),
 }
 
-/// Lays out a drag preview for a square icon of `icon_px` with an optional
-/// `(badge_w, badge_h)` count badge overlapping its bottom-right corner. The
-/// hotspot stays centered on the front icon with or without a badge so single
-/// and multiple drags share the same cursor relationship.
 fn drag_preview_layout(icon_px: f64, badge: Option<(f64, f64)>) -> DragPreviewLayout {
     let front_x = DRAG_PROXY_PADDING;
     let front_y = DRAG_PROXY_PADDING;
@@ -71,12 +65,6 @@ fn drag_preview_layout(icon_px: f64, badge: Option<(f64, f64)>) -> DragPreviewLa
     }
 }
 
-/// Renders a sharp file drag preview for `entries` and returns its pointer
-/// hotspot. The icon comes straight from the canonical vector assets at the
-/// final display size: the previous pile snapshotted the 17px row icon widget
-/// and scaled its raster up to drag size, turning every edge to mush. Single
-/// items show the front icon alone; multiple items add the ghost stack and the
-/// count badge on the same icon at the same scale.
 #[expect(
     deprecated,
     reason = "lookup_color is the only way to read custom named CSS colors"
@@ -221,9 +209,6 @@ pub(crate) struct PreparedFileDrop {
     pub state: Rc<FileDropState>,
 }
 
-/// Hover delay before a folder opens while a file drag hovers over it: short
-/// enough to feel responsive, long enough to avoid opening folders the pointer
-/// only passes over.
 pub(crate) const SPRING_LOAD_NAVIGATE_DELAY: Duration = Duration::from_millis(750);
 
 /// Reuses one classification for cursor feedback and the eventual transfer.
@@ -270,12 +255,7 @@ impl FileDropState {
         (self.destination)()
     }
 
-    /// Arms spring-loaded navigation into `destination` while a file drag hovers over
-    /// this drop target. `drag_active` must report whether the drag is still over this
-    /// target; re-arming for the same destination keeps the running timer so motion
-    /// events cannot postpone navigation, while a different destination replaces it.
-    /// Firing re-resolves the live destination and navigates only when it still
-    /// matches, leaving the drag operation itself untouched so dropping still works.
+    // Repeated motion must not postpone navigation; recycled rows must not open stale destinations.
     pub(crate) fn schedule_spring_load_navigation(
         self: &Rc<Self>,
         drag_active: impl Fn() -> bool + 'static,
@@ -420,10 +400,6 @@ impl FileDropState {
     }
 }
 
-/// Resolves the hovered folder when a file drag is over a folder drop target,
-/// regardless of whether the eventual drop would be valid. Hover tracking drives
-/// both spring-loaded navigation and drop-target highlighting; drop validity
-/// keeps its own checks for cursor feedback and the eventual commit.
 pub(crate) fn file_drag_hover_target(
     drop_state: &Rc<FileDropState>,
     target: &gtk::DropTarget,
@@ -439,13 +415,7 @@ pub(crate) fn file_drag_hover_target(
         .map(|_| destination)
 }
 
-/// Arms spring-loaded navigation for a folder drop target while a file drag hovers
-/// over it. Arming deliberately ignores drop validity: hovering the drag's own
-/// source folder can never accept the drop (a self-drop is a noop) but must still
-/// spring open, so only the offered payload decides. Drop highlighting and the
-/// eventual commit keep their own validity checks. Call from drop-target enter,
-/// motion, and value handlers; call [`FileDropState::cancel_spring_load_navigation`]
-/// from leave and drop handlers.
+/// Ignore drop validity so the source folder can spring open even though a self-drop is forbidden.
 pub(crate) fn arm_spring_load_navigation(
     drop_state: &Rc<FileDropState>,
     target: &gtk::DropTarget,

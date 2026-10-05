@@ -443,9 +443,6 @@ pub(crate) fn sized_icon_paintable(
     primary_icon_texture_at(name, color, texture_px, logical_px, context)
 }
 
-/// Renders a canonical icon texture at exactly `texture_px` device pixels for
-/// drag previews, which display icon textures at native size with no separate
-/// logical size. The vector source keeps the preview sharp at any size.
 pub(crate) fn drag_icon_texture(name: &str, color: &str, texture_px: i32) -> Option<gdk::Texture> {
     let texture_px = texture_px.clamp(24, 768);
     primary_icon_texture_at(name, color, texture_px, texture_px, IconContext::Interface)
