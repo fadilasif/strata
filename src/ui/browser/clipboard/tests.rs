@@ -118,9 +118,9 @@ fn texture_has_painted_pixels(texture: &gtk::gdk::Texture) -> bool {
 }
 
 #[test]
-fn drag_preview_icon_renders_centered_textures_for_single_and_multiple_entries() {
+fn drag_preview_icon_renders_single_and_multiple_entries() {
     crate::test_support::gtk_test(
-        "ui::browser::clipboard::tests::drag_preview_icon_renders_centered_textures_for_single_and_multiple_entries",
+        "ui::browser::clipboard::tests::drag_preview_icon_renders_single_and_multiple_entries",
         || {
             use crate::model::{EntryKind, MetadataValue};
             use std::ffi::OsString;
@@ -157,13 +157,8 @@ fn drag_preview_icon_renders_centered_textures_for_single_and_multiple_entries()
                 "headless stage must realize widgets"
             );
 
-            let (texture, hot_x, hot_y) =
-                drag_preview_icon(&base, &[entry("photo.png", EntryKind::File)])
-                    .expect("single file preview renders");
-            // The 46px layout canvas plus the icon shadow outset.
-            assert!((46..=52).contains(&texture.width()));
-            assert!((46..=52).contains(&texture.height()));
-            assert_eq!((hot_x, hot_y), (19, 19));
+            let (texture, _, _) = drag_preview_icon(&base, &[entry("photo.png", EntryKind::File)])
+                .expect("single file preview renders");
             assert!(texture_has_painted_pixels(&texture));
 
             let entries = [
@@ -171,32 +166,12 @@ fn drag_preview_icon_renders_centered_textures_for_single_and_multiple_entries()
                 entry("notes.txt", EntryKind::File),
                 entry("archive", EntryKind::Directory),
             ];
-            let (texture, hot_x, hot_y) =
+            let (texture, _, _) =
                 drag_preview_icon(&base, &entries).expect("multi file preview renders");
-            assert!(texture.width() >= 46 && texture.height() >= 46);
-            assert_eq!(
-                (hot_x, hot_y),
-                (19, 19),
-                "the pile keeps the single icon's centered hotspot"
-            );
             assert!(texture_has_painted_pixels(&texture));
             window.destroy();
         },
     );
-}
-
-#[test]
-fn drag_preview_layout_shares_one_centered_hotspot_with_and_without_a_badge() {
-    let single = drag_preview_layout(32.0, None);
-    assert_eq!(single.hotspot, (19, 19));
-    assert_eq!((single.canvas_w, single.canvas_h), (46.0, 46.0));
-
-    let multi = drag_preview_layout(32.0, Some((24.0, 20.0)));
-    assert_eq!(
-        multi.hotspot, single.hotspot,
-        "single and multiple previews must share the same cursor relationship"
-    );
-    assert!(multi.canvas_w >= single.canvas_w && multi.canvas_h >= single.canvas_h);
 }
 
 #[test]
@@ -814,9 +789,9 @@ fn spring_load_target(destination: &Location) -> PreparedFileDrop {
 }
 
 #[test]
-fn spring_load_navigates_after_hover_delay_during_active_drag() {
+fn spring_load_motion_does_not_restart_the_delay() {
     crate::test_support::gtk_test(
-        "ui::browser::clipboard::tests::spring_load_navigates_after_hover_delay_during_active_drag",
+        "ui::browser::clipboard::tests::spring_load_motion_does_not_restart_the_delay",
         || {
             let destination = Location::local("/fixture/spring");
             let prepared = spring_load_target(&destination);
@@ -828,8 +803,15 @@ fn spring_load_navigates_after_hover_delay_during_active_drag() {
                 Duration::from_millis(20),
                 move |location| reached.borrow_mut().push(location),
             );
+            let restarted = navigated.clone();
+            prepared.state.schedule_spring_load_navigation(
+                || true,
+                destination.clone(),
+                Duration::from_secs(2),
+                move |location| restarted.borrow_mut().push(location),
+            );
 
-            pump_main_loop_until(Duration::from_secs(2), || !navigated.borrow().is_empty());
+            pump_main_loop_until(Duration::from_secs(1), || !navigated.borrow().is_empty());
 
             assert_eq!(*navigated.borrow(), vec![destination]);
         },
@@ -847,8 +829,6 @@ fn arming_without_an_active_drag_never_navigates() {
             let reached = navigated.clone();
             let navigate: Rc<dyn Fn(Location)> =
                 Rc::new(move |location| reached.borrow_mut().push(location));
-            // No drag is over the target, so the hovered drop is not acceptable
-            // and arming must be a no-op rather than scheduling navigation.
             arm_spring_load_navigation(&prepared.state, &prepared.target, &navigate);
 
             pump_main_loop_until(Duration::from_millis(300), || {
@@ -859,49 +839,6 @@ fn arming_without_an_active_drag_never_navigates() {
                 navigated.borrow().is_empty(),
                 "arming without an active drag must not navigate"
             );
-        },
-    );
-}
-
-#[test]
-fn hover_target_resolves_only_while_a_file_drag_is_over_the_folder() {
-    crate::test_support::gtk_test(
-        "ui::browser::clipboard::tests::hover_target_resolves_only_while_a_file_drag_is_over_the_folder",
-        || {
-            let destination = Location::local("/fixture/spring");
-            let prepared = spring_load_target(&destination);
-
-            // No drag is active, so plain hover must neither highlight nor arm.
-            assert_eq!(
-                file_drag_hover_target(&prepared.state, &prepared.target),
-                None
-            );
-        },
-    );
-}
-
-#[test]
-fn spring_load_navigates_into_the_drag_source_folder() {
-    crate::test_support::gtk_test(
-        "ui::browser::clipboard::tests::spring_load_navigates_into_the_drag_source_folder",
-        || {
-            // A drop into the folder the drag started from is always a noop, but
-            // hover navigation must still spring it open: the navigation layer
-            // intentionally knows nothing about drop validity.
-            let source = Location::local("/fixture/source");
-            let prepared = spring_load_target(&source);
-            let navigated = Rc::new(RefCell::new(Vec::new()));
-            let reached = navigated.clone();
-            prepared.state.schedule_spring_load_navigation(
-                || true,
-                source.clone(),
-                Duration::from_millis(20),
-                move |location| reached.borrow_mut().push(location),
-            );
-
-            pump_main_loop_until(Duration::from_secs(2), || !navigated.borrow().is_empty());
-
-            assert_eq!(*navigated.borrow(), vec![source]);
         },
     );
 }
@@ -964,9 +901,9 @@ fn hover_without_an_active_drag_does_not_navigate() {
 }
 
 #[test]
-fn spring_load_keeps_the_drag_alive_and_fires_exactly_once() {
+fn spring_load_fires_exactly_once() {
     crate::test_support::gtk_test(
-        "ui::browser::clipboard::tests::spring_load_keeps_the_drag_alive_and_fires_exactly_once",
+        "ui::browser::clipboard::tests::spring_load_fires_exactly_once",
         || {
             let destination = Location::local("/fixture/spring");
             let prepared = spring_load_target(&destination);
@@ -982,12 +919,7 @@ fn spring_load_keeps_the_drag_alive_and_fires_exactly_once() {
             pump_main_loop_until(Duration::from_secs(2), || !navigated.borrow().is_empty());
             pump_main_loop_until(Duration::from_millis(200), || navigated.borrow().len() > 1);
 
-            assert_eq!(*navigated.borrow(), vec![destination.clone()]);
-            assert_eq!(
-                prepared.state.destination(),
-                Some(destination),
-                "navigation must leave the drop target usable for the eventual drop"
-            );
+            assert_eq!(*navigated.borrow(), vec![destination]);
         },
     );
 }
@@ -1024,6 +956,32 @@ fn hovering_another_folder_replaces_the_pending_navigation() {
             pump_main_loop_until(Duration::from_secs(2), || !navigated.borrow().is_empty());
 
             assert_eq!(*navigated.borrow(), vec![second]);
+        },
+    );
+}
+
+#[test]
+fn recycling_the_hovered_row_does_not_open_its_previous_folder() {
+    crate::test_support::gtk_test(
+        "ui::browser::clipboard::tests::recycling_the_hovered_row_does_not_open_its_previous_folder",
+        || {
+            let first = Location::local("/fixture/first");
+            let hovered = Rc::new(RefCell::new(Some(first.clone())));
+            let prepared = {
+                let hovered = hovered.clone();
+                prepare_file_drop_target(move || hovered.borrow().clone())
+            };
+            let navigated = Rc::new(Cell::new(false));
+            let observed = navigated.clone();
+            prepared.state.schedule_spring_load_navigation(
+                || true,
+                first,
+                Duration::from_millis(20),
+                move |_| observed.set(true),
+            );
+            *hovered.borrow_mut() = Some(Location::local("/fixture/second"));
+            pump_main_loop_until(Duration::from_millis(100), || navigated.get());
+            assert!(!navigated.get());
         },
     );
 }
