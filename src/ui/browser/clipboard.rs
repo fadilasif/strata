@@ -25,7 +25,7 @@ const DRAG_PROXY_STACK_OFFSET: f64 = 5.0;
 
 /// Logical display size shared by single-item drag icons and the multi-item
 /// pile so the pair stays visually consistent.
-const DRAG_PREVIEW_ICON_PX: f64 = 48.0;
+const DRAG_PREVIEW_ICON_PX: f64 = 32.0;
 
 struct DragPreviewLayout {
     canvas_w: f64,

@@ -160,10 +160,10 @@ fn drag_preview_icon_renders_centered_textures_for_single_and_multiple_entries()
             let (texture, hot_x, hot_y) =
                 drag_preview_icon(&base, &[entry("photo.png", EntryKind::File)])
                     .expect("single file preview renders");
-            // The 62px layout canvas plus the icon shadow outset.
-            assert!((62..=68).contains(&texture.width()));
-            assert!((62..=68).contains(&texture.height()));
-            assert_eq!((hot_x, hot_y), (27, 27));
+            // The 46px layout canvas plus the icon shadow outset.
+            assert!((46..=52).contains(&texture.width()));
+            assert!((46..=52).contains(&texture.height()));
+            assert_eq!((hot_x, hot_y), (19, 19));
             assert!(texture_has_painted_pixels(&texture));
 
             let entries = [
@@ -173,10 +173,10 @@ fn drag_preview_icon_renders_centered_textures_for_single_and_multiple_entries()
             ];
             let (texture, hot_x, hot_y) =
                 drag_preview_icon(&base, &entries).expect("multi file preview renders");
-            assert!(texture.width() >= 62 && texture.height() >= 62);
+            assert!(texture.width() >= 46 && texture.height() >= 46);
             assert_eq!(
                 (hot_x, hot_y),
-                (27, 27),
+                (19, 19),
                 "the pile keeps the single icon's centered hotspot"
             );
             assert!(texture_has_painted_pixels(&texture));
@@ -187,11 +187,11 @@ fn drag_preview_icon_renders_centered_textures_for_single_and_multiple_entries()
 
 #[test]
 fn drag_preview_layout_shares_one_centered_hotspot_with_and_without_a_badge() {
-    let single = drag_preview_layout(48.0, None);
-    assert_eq!(single.hotspot, (27, 27));
-    assert_eq!((single.canvas_w, single.canvas_h), (62.0, 62.0));
+    let single = drag_preview_layout(32.0, None);
+    assert_eq!(single.hotspot, (19, 19));
+    assert_eq!((single.canvas_w, single.canvas_h), (46.0, 46.0));
 
-    let multi = drag_preview_layout(48.0, Some((24.0, 20.0)));
+    let multi = drag_preview_layout(32.0, Some((24.0, 20.0)));
     assert_eq!(
         multi.hotspot, single.hotspot,
         "single and multiple previews must share the same cursor relationship"
