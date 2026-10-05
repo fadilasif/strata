@@ -25,17 +25,12 @@
     <file>icons/scalable/actions/strata-disc.svg</file>
     <file>icons/scalable/actions/strata-download.svg</file>
     <file>icons/scalable/actions/strata-eject.svg</file>
-    <file>icons/scalable/actions/strata-excel.svg</file>
     <file>icons/scalable/actions/strata-eye-off.svg</file>
     <file>icons/scalable/actions/strata-eye.svg</file>
     <file>icons/scalable/actions/strata-external-link.svg</file>
-    <file>icons/scalable/actions/strata-file.svg</file>
     <file>icons/scalable/actions/strata-file-archive.svg</file>
     <file>icons/scalable/actions/strata-file-braces.svg</file>
     <file>icons/scalable/actions/strata-file-code.svg</file>
-    <file>icons/scalable/actions/strata-file-font.svg</file>
-    <file>icons/scalable/actions/strata-file-markdown.svg</file>
-    <file>icons/scalable/actions/strata-file-pdf.svg</file>
     <file>icons/scalable/actions/strata-file-plus.svg</file>
     <file>icons/scalable/actions/strata-file-spreadsheet.svg</file>
     <file>icons/scalable/actions/strata-file-terminal.svg</file>
@@ -81,7 +76,7 @@
     <file>icons/scalable/actions/strata-skip-forward.svg</file>
     <file>icons/scalable/actions/strata-minus.svg</file>
     <file>icons/scalable/actions/strata-plus.svg</file>
-    <file>icons/scalable/actions/strata-powerpoint.svg</file>
+    <file>icons/scalable/actions/strata-presentation.svg</file>
     <file>icons/scalable/actions/strata-printer.svg</file>
     <file>icons/scalable/actions/strata-rows.svg</file>
     <file>icons/scalable/actions/strata-route.svg</file>
@@ -104,7 +99,6 @@
     <file>icons/scalable/actions/strata-music-2.svg</file>
     <file>icons/scalable/actions/strata-volume-2.svg</file>
     <file>icons/scalable/actions/strata-volume-x.svg</file>
-    <file>icons/scalable/actions/strata-word.svg</file>
     <file>icons/scalable/actions/strata-wrap-text.svg</file>
     <file>icons/scalable/actions/strata-x.svg</file>
     <file>icons/scalable/actions/strata-panel-right-close.svg</file>

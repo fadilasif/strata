@@ -1257,7 +1257,8 @@ fn set_fallback_icon(
 ) -> (usize, u64) {
     let ids = prepare_thumbnail_target(image, size);
     clear_displayed_thumbnail(image);
-    let (texture, customized) = path_icon_texture(path, icon);
+    let (texture, customized) =
+        path_icon_texture(path, icon, image.icon_pixel_size(), image.scale_factor());
     image.set_fallback(icon, texture.as_ref());
     if let Some(p) = path {
         register_tracked_icon(image, p, icon, customized);
@@ -1269,9 +1270,22 @@ fn set_fallback_icon(
     ids
 }
 
-fn path_icon_texture(path: Option<&Path>, fallback_icon: &str) -> (Option<gdk::Texture>, bool) {
+fn path_icon_texture(
+    path: Option<&Path>,
+    fallback_icon: &str,
+    size: i32,
+    scale_factor: i32,
+) -> (Option<gdk::Texture>, bool) {
     let Some(path) = path else {
-        return (crate::assets::primary_icon_paintable(fallback_icon), false);
+        return (
+            crate::assets::sized_icon_paintable(
+                fallback_icon,
+                &crate::assets::primary_icon_color(),
+                size,
+                scale_factor,
+            ),
+            false,
+        );
     };
     let preference_manager = super::preferences::PreferenceManager::shared();
     let custom_icon = preference_manager.custom_icon(path);
@@ -1285,7 +1299,7 @@ fn path_icon_texture(path: Option<&Path>, fallback_icon: &str) -> (Option<gdk::T
             .map_or_else(crate::assets::primary_icon_color, |color| {
                 color.hex().to_owned()
             });
-        crate::assets::folder_decoration_paintable(decoration, &color)
+        crate::assets::sized_folder_decoration_paintable(decoration, &color, size, scale_factor)
     } else if let Some(emoji) = custom_icon
         .as_deref()
         .and_then(crate::assets::icons::custom_emoji)
@@ -1294,16 +1308,26 @@ fn path_icon_texture(path: Option<&Path>, fallback_icon: &str) -> (Option<gdk::T
     } else {
         let rendered_icon = custom_icon.as_deref().unwrap_or(fallback_icon);
         if let Some(color) = color {
-            crate::assets::custom_colored_icon_paintable(rendered_icon, color.hex())
+            crate::assets::sized_icon_paintable(rendered_icon, color.hex(), size, scale_factor)
         } else {
-            crate::assets::primary_icon_paintable(rendered_icon)
+            crate::assets::sized_icon_paintable(
+                rendered_icon,
+                &crate::assets::primary_icon_color(),
+                size,
+                scale_factor,
+            )
         }
     };
     (texture, customized)
 }
 
 fn apply_path_customization(image: &ThumbnailSlot, path: &Path, fallback_icon: &str) -> bool {
-    let (texture, customized) = path_icon_texture(Some(path), fallback_icon);
+    let (texture, customized) = path_icon_texture(
+        Some(path),
+        fallback_icon,
+        image.icon_pixel_size(),
+        image.scale_factor(),
+    );
     image.set_fallback(fallback_icon, texture.as_ref());
     customized
 }
@@ -1342,6 +1366,24 @@ fn apply_path_customization_image(
         }
     }
     customized
+}
+
+pub(super) fn refresh_slot_icon(image: &ThumbnailSlot) {
+    if image.texture().is_some() {
+        return;
+    }
+    let tracked = TRACKED_CUSTOMIZED_ICONS.with_borrow(|icons| {
+        icons
+            .get(&(image.as_ptr() as usize))
+            .map(|tracked| (tracked.path.clone(), tracked.icon.clone()))
+    });
+    if let Some((path, icon)) = tracked {
+        apply_path_customization(image, &path, &icon);
+    } else if let Some(icon) = image.fallback_icon() {
+        let (texture, _) =
+            path_icon_texture(None, &icon, image.icon_pixel_size(), image.scale_factor());
+        image.set_fallback(&icon, texture.as_ref());
+    }
 }
 
 fn register_tracked_icon(image: &ThumbnailSlot, path: &Path, icon: &str, customized: bool) {

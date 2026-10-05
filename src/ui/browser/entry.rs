@@ -179,17 +179,12 @@ pub(super) fn with_filter_terms<R>(query: &str, apply: impl FnOnce(&mut PathMatc
     })
 }
 
-/// Exact filenames with dedicated icons, checked before any extension rule so
-/// specific names beat generic suffixes. Stored names are lowercase canonical
-/// forms and matched case-insensitively.
 static FILENAME_ICONS: &[(&str, &str)] = &[
-    // Lockfiles and shrinkwrap beat the generic .json/.yaml extension.
     ("package-lock.json", icons::COG),
     ("npm-shrinkwrap.json", icons::COG),
     ("pnpm-lock.yaml", icons::COG),
     ("bun.lockb", icons::COG),
     ("cargo.lock", icons::COG),
-    // Recognized project and build manifests.
     ("gemfile", icons::COG),
     ("go.mod", icons::COG),
     ("pom.xml", icons::COG),
@@ -197,7 +192,6 @@ static FILENAME_ICONS: &[(&str, &str)] = &[
     ("cmakelists.txt", icons::COG),
     ("dockerfile", icons::COG),
     ("makefile", icons::COG),
-    // Git, editor, and package-manager configuration dotfiles.
     (".gitignore", icons::COG),
     (".gitconfig", icons::COG),
     (".editorconfig", icons::COG),
@@ -209,7 +203,6 @@ static FILENAME_ICONS: &[(&str, &str)] = &[
     (".vimrc", icons::COG),
     (".gvimrc", icons::COG),
     (".viminfo", icons::COG),
-    // Shell rcs and session files use the terminal glyph.
     (".bashrc", icons::FILE_TERMINAL),
     (".bash_profile", icons::FILE_TERMINAL),
     (".bash_login", icons::FILE_TERMINAL),
@@ -224,21 +217,14 @@ static FILENAME_ICONS: &[(&str, &str)] = &[
     (".kshrc", icons::FILE_TERMINAL),
     (".cshrc", icons::FILE_TERMINAL),
     (".tcshrc", icons::FILE_TERMINAL),
-    // Known SSH key files.
     ("id_rsa", icons::KEY_ROUND),
     ("id_ed25519", icons::KEY_ROUND),
     ("authorized_keys", icons::KEY_ROUND),
     ("known_hosts", icons::KEY_ROUND),
-    // Recognized extensionless documents.
     ("readme", icons::DOCUMENTS),
     ("license", icons::DOCUMENTS),
 ];
 
-/// (prefix, suffix, icon) filename affix patterns, first match wins. Either
-/// end may be empty (but not both). Checked after exact names so Dockerfile
-/// beats a hypothetical Dockerfile.txt, and before extensions so `*_history`
-/// and `*.lock` win over any suffix they carry. Matched case-sensitively
-/// against the literal filename; entries carry their canonical casing.
 static FILENAME_AFFIX_PATTERNS: &[(&str, &str, &str)] = &[
     ("Dockerfile.", "", icons::COG),
     ("tsconfig.", ".json", icons::COG),
@@ -296,8 +282,7 @@ pub(in crate::ui) fn icon_for_name(name: &str) -> &'static str {
             crate::assets::icons::DATABASE
         }
         Some("iso" | "img" | "dmg" | "vhd" | "vhdx" | "vdi" | "qcow") => crate::assets::icons::DISC,
-        Some("csv" | "tsv") => crate::assets::icons::FILE_SPREADSHEET,
-        Some("xls" | "xlsx" | "ods") => crate::assets::icons::EXCEL,
+        Some("csv" | "tsv" | "xls" | "xlsx" | "ods") => icons::FILE_SPREADSHEET,
         Some(
             "rs" | "c" | "h" | "cpp" | "hpp" | "go" | "java" | "kt" | "swift" | "dart" | "scala"
             | "hs" | "lua" | "rb" | "php" | "py" | "js" | "ts" | "jsx" | "tsx" | "m" | "v" | "cs",
@@ -305,15 +290,9 @@ pub(in crate::ui) fn icon_for_name(name: &str) -> &'static str {
         Some("sh" | "bash" | "zsh" | "fish" | "ksh" | "csh" | "ps1" | "bat" | "cmd") => {
             crate::assets::icons::FILE_TERMINAL
         }
-        Some("doc" | "docx" | "odt" | "rtf") => crate::assets::icons::WORD,
-        Some("ppt" | "pptx" | "pps" | "ppsx" | "odp") => crate::assets::icons::POWERPOINT,
-        Some("md" | "markdown" | "mdown" | "mkd") => crate::assets::icons::FILE_MARKDOWN,
-        Some("ttf" | "otf" | "woff" | "woff2" | "eot" | "ttc" | "otc") => {
-            crate::assets::icons::FILE_FONT
-        }
-        Some("txt") => crate::assets::icons::DOCUMENTS,
-        Some("pdf") => crate::assets::icons::FILE_PDF,
-        _ => crate::assets::icons::FILE,
+        Some("ppt" | "pptx" | "pps" | "ppsx" | "odp") => icons::PRESENTATION,
+        Some("ttf" | "otf" | "woff" | "woff2" | "eot" | "ttc" | "otc") => icons::FILE_TYPE,
+        _ => icons::DOCUMENTS,
     }
 }
 

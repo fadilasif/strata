@@ -1,6 +1,21 @@
 // SPDX-License-Identifier: MIT
 
-use super::{folder_decoration_texture, icons, recolor_icon_source};
+use super::{icons, recolor_icon_source};
+
+pub(crate) fn primary_icon_paintable(name: &str) -> Option<gtk::gdk::Texture> {
+    custom_colored_icon_paintable(name, &super::primary_icon_color())
+}
+
+pub(crate) fn custom_colored_icon_paintable(name: &str, color: &str) -> Option<gtk::gdk::Texture> {
+    super::sized_icon_paintable(name, color, 24, 1)
+}
+
+pub(crate) fn folder_decoration_paintable(
+    decoration: &str,
+    color: &str,
+) -> Option<gtk::gdk::Texture> {
+    super::sized_folder_decoration_paintable(decoration, color, 24, 1)
+}
 
 #[test]
 fn themed_icons_replace_every_legacy_fallback_color() {
@@ -40,27 +55,33 @@ fn customization_choices_are_unique_and_whitelisted() {
 }
 
 #[test]
-fn office_icons_render_visible_geometry() {
+fn icon_cache_distinguishes_logical_size_from_display_resolution() {
     crate::test_support::gtk_test(
-        "assets::tests::office_icons_render_visible_geometry",
+        "assets::tests::icon_cache_distinguishes_logical_size_from_display_resolution",
         || {
-            use gtk::prelude::*;
-            for name in ["strata-word", "strata-excel", "strata-powerpoint"] {
-                let texture = super::custom_colored_icon_paintable(name, "#3ddc84")
-                    .expect("office icon renders");
-                let stride = texture.width() as usize * 4;
-                let mut pixels = vec![0; stride * texture.height() as usize];
-                texture.download(&mut pixels, stride);
-                let painted = pixels
-                    .as_chunks::<4>()
-                    .0
-                    .iter()
-                    .filter(|pixel| u32::from_ne_bytes(**pixel) >> 24 != 0)
-                    .count();
-                assert!(
-                    painted > 500,
-                    "office icon paints real artwork, not empty pixels: {name}"
+            let render = |name, color, size, scale| {
+                super::sized_icon_paintable(name, color, size, scale).expect("render icon")
+            };
+            for name in [icons::FOLDER, icons::FILE_CODE, icons::FILE_SPREADSHEET] {
+                let small = render(name, "#123456", 64, 2);
+                let large = render(name, "#123456", 128, 1);
+                assert_ne!(
+                    small, large,
+                    "equal raster resolution must not share stroke weight"
                 );
+                assert_eq!(small, render(name, "#123456", 64, 2));
+                assert_eq!(large, render(name, "#123456", 128, 1));
+                assert_ne!(large, render(name, "#abcdef", 128, 1));
+            }
+            let render_decoration = |decoration, size, scale| {
+                super::sized_folder_decoration_paintable(decoration, "#123456", size, scale)
+                    .expect("render decorated folder")
+            };
+            for decoration in [icons::PICTURES, "emoji:🚀"] {
+                let small = render_decoration(decoration, 64, 2);
+                let large = render_decoration(decoration, 128, 1);
+                assert_ne!(small, large);
+                assert_eq!(small, render_decoration(decoration, 64, 2));
             }
         },
     );
@@ -138,9 +159,9 @@ fn cold_interface_icons_render_when_decoder_workers_cannot_start() {
                     "bundled icon must render visible geometry: {name}"
                 );
             }
-            assert!(folder_decoration_texture(icons::PICTURES, "#d46b31").is_some());
+            assert!(folder_decoration_paintable(icons::PICTURES, "#d46b31").is_some());
             assert!(super::emoji_icon_paintable("🚀").is_some());
-            assert!(folder_decoration_texture("emoji:🚀", "#d46b31").is_some());
+            assert!(folder_decoration_paintable("emoji:🚀", "#d46b31").is_some());
         },
     );
 }
