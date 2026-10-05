@@ -2618,14 +2618,13 @@ fn install_sidebar_file_drop(
         move || Some(destination.clone())
     });
     drop.set_propagation_phase(gtk::PropagationPhase::Capture);
-    // Spring-loaded folders: hovering a place during a file drag highlights it
-    // like any other drop hover and navigates to it after a delay without
-    // disturbing the current selection. Focus follows navigation exactly as
-    // keyboard arrival does, so the row shows the same active-plus-focus state.
     let spring_navigate: Rc<dyn Fn(Location)> = {
-        let view = view.clone();
+        let view = view.downgrade();
         let row = row.downgrade();
         Rc::new(move |location| {
+            let Some(view) = view.upgrade() else {
+                return;
+            };
             view.browser().navigate_location(location, false);
             if let Some(row) = row.upgrade() {
                 row.grab_focus();

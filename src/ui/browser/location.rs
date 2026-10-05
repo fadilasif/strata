@@ -2310,8 +2310,6 @@ impl ViewState {
                         state.browser.navigate(clicked_crumb.clone());
                     }
                 });
-                // Spring-loaded folders: hovering a parent crumb during a file
-                // drag navigates to it after a delay, preserving selection.
                 let spring_navigate: Rc<dyn Fn(Location)> = {
                     let weak = weak.clone();
                     Rc::new(move |location| {
@@ -2349,6 +2347,25 @@ impl ViewState {
                 let state_for_leave = drop_state.clone();
                 drop.connect_leave(move |_| {
                     state_for_leave.cancel_spring_load_navigation();
+                });
+                drop.connect_drop(move |target, value, _, _| {
+                    drop_state.cancel_spring_load_navigation();
+                    let Some(state) = weak.upgrade() else {
+                        return false;
+                    };
+                    let Some(destination) = drop_state.destination() else {
+                        return false;
+                    };
+                    let Some(sources) = super::locations_from_file_list_value(value) else {
+                        return false;
+                    };
+                    if sources.is_empty() {
+                        return false;
+                    }
+                    let commit =
+                        super::file_drop_commit(target, &destination, &sources, &drop_state);
+                    state.commit_file_drop(destination, sources, commit);
+                    true
                 });
                 button.add_controller(drop);
                 self.breadcrumbs.append(&button);
