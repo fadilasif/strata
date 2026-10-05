@@ -3876,11 +3876,12 @@ fn install_list_drag_drop(
     let navigate_for_enter = spring_navigate.clone();
     drop.connect_enter(move |target, _, _| {
         let action = super::browser::file_drop_action(target, &state_for_enter);
+        let hovered = super::browser::file_drag_hover_target(&state_for_enter, target).is_some();
         if let Some(row) = highlighted_row.upgrade() {
-            if action.is_empty() {
-                row.remove_css_class("drop-destination");
-            } else {
+            if hovered {
                 row.add_css_class("drop-destination");
+            } else {
+                row.remove_css_class("drop-destination");
             }
         }
         super::browser::arm_spring_load_navigation(&state_for_enter, target, &navigate_for_enter);
@@ -3891,11 +3892,12 @@ fn install_list_drag_drop(
     let navigate_for_motion = spring_navigate.clone();
     drop.connect_motion(move |target, _, _| {
         let action = super::browser::file_drop_action(target, &state_for_motion);
+        let hovered = super::browser::file_drag_hover_target(&state_for_motion, target).is_some();
         if let Some(row) = highlighted_row.upgrade() {
-            if action.is_empty() {
-                row.remove_css_class("drop-destination");
-            } else {
+            if hovered {
                 row.add_css_class("drop-destination");
+            } else {
+                row.remove_css_class("drop-destination");
             }
         }
         super::browser::arm_spring_load_navigation(&state_for_motion, target, &navigate_for_motion);
@@ -3908,12 +3910,13 @@ fn install_list_drag_drop(
         if target.current_drop().is_none() {
             return;
         }
-        let action = super::browser::file_drop_action(target, &state_for_value);
+        super::browser::file_drop_action(target, &state_for_value);
+        let hovered = super::browser::file_drag_hover_target(&state_for_value, target).is_some();
         if let Some(row) = highlighted_row.upgrade() {
-            if action.is_empty() {
-                row.remove_css_class("drop-destination");
-            } else {
+            if hovered {
                 row.add_css_class("drop-destination");
+            } else {
+                row.remove_css_class("drop-destination");
             }
         }
         super::browser::arm_spring_load_navigation(&state_for_value, target, &navigate_for_value);

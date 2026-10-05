@@ -377,6 +377,25 @@ impl FileDropState {
     }
 }
 
+/// Resolves the hovered folder when a file drag is over a folder drop target,
+/// regardless of whether the eventual drop would be valid. Hover tracking drives
+/// both spring-loaded navigation and drop-target highlighting; drop validity
+/// keeps its own checks for cursor feedback and the eventual commit.
+pub(crate) fn file_drag_hover_target(
+    drop_state: &Rc<FileDropState>,
+    target: &gtk::DropTarget,
+) -> Option<Location> {
+    let destination = drop_state.destination()?;
+    target
+        .current_drop()
+        .filter(|offered| {
+            offered
+                .formats()
+                .contains_type(gtk::gdk::FileList::static_type())
+        })
+        .map(|_| destination)
+}
+
 /// Arms spring-loaded navigation for a folder drop target while a file drag hovers
 /// over it. Arming deliberately ignores drop validity: hovering the drag's own
 /// source folder can never accept the drop (a self-drop is a noop) but must still
@@ -389,18 +408,10 @@ pub(crate) fn arm_spring_load_navigation(
     target: &gtk::DropTarget,
     navigate: &Rc<dyn Fn(Location)>,
 ) {
-    let Some(destination) = drop_state.destination() else {
-        return;
-    };
-    let file_drag_offered = target.current_drop().is_some_and(|offered| {
-        offered
-            .formats()
-            .contains_type(gtk::gdk::FileList::static_type())
-    });
-    if !file_drag_offered {
+    let Some(destination) = file_drag_hover_target(drop_state, target) else {
         drop_state.cancel_spring_load_navigation();
         return;
-    }
+    };
     let drag_active = {
         let target = target.downgrade();
         move || {

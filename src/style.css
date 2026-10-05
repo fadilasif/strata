@@ -2029,7 +2029,8 @@ scrollbar.horizontal > range > trough > slider {
 }
 
 .sidebar-row.reorderable:drop(active),
-.sidebar-row:drop(active) {
+.sidebar-row:drop(active),
+.sidebar-row.drop-destination {
   background: alpha(@strata_highlight, 0.46);
   outline-color: alpha(@strata_accent, 0.72);
   transform: scale(1.02);

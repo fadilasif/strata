@@ -775,6 +775,23 @@ fn arming_without_an_active_drag_never_navigates() {
 }
 
 #[test]
+fn hover_target_resolves_only_while_a_file_drag_is_over_the_folder() {
+    crate::test_support::gtk_test(
+        "ui::browser::clipboard::tests::hover_target_resolves_only_while_a_file_drag_is_over_the_folder",
+        || {
+            let destination = Location::local("/fixture/spring");
+            let prepared = spring_load_target(&destination);
+
+            // No drag is active, so plain hover must neither highlight nor arm.
+            assert_eq!(
+                file_drag_hover_target(&prepared.state, &prepared.target),
+                None
+            );
+        },
+    );
+}
+
+#[test]
 fn spring_load_navigates_into_the_drag_source_folder() {
     crate::test_support::gtk_test(
         "ui::browser::clipboard::tests::spring_load_navigates_into_the_drag_source_folder",

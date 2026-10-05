@@ -10,8 +10,8 @@ use crate::ui::{
         ViewState,
         clipboard::{
             ClipboardMark, PreparedFileDrop, clipboard_mark, drag_actions_for_modifiers,
-            drag_icon_with_count, file_drag_content, file_drop_action, file_drop_commit,
-            locations_from_file_list_value, prepare_file_drop_target,
+            drag_icon_with_count, file_drag_content, file_drag_hover_target, file_drop_action,
+            file_drop_commit, locations_from_file_list_value, prepare_file_drop_target,
         },
         collection::{ViewMap, activate_recursive_search_result, cancel_source},
         entry::{
@@ -292,11 +292,12 @@ pub(super) fn column_rows(
             let navigate_for_enter = spring_navigate.clone();
             drop.connect_enter(move |target, _, _| {
                 let action = file_drop_action(target, &state_for_enter);
+                let hovered = file_drag_hover_target(&state_for_enter, target).is_some();
                 if let Some(row) = highlighted_row.upgrade() {
-                    if action.is_empty() {
-                        row.remove_css_class("drop-destination");
-                    } else {
+                    if hovered {
                         row.add_css_class("drop-destination");
+                    } else {
+                        row.remove_css_class("drop-destination");
                     }
                 }
                 arm_spring_load_navigation(&state_for_enter, target, &navigate_for_enter);
@@ -307,11 +308,12 @@ pub(super) fn column_rows(
             let navigate_for_motion = spring_navigate.clone();
             drop.connect_motion(move |target, _, _| {
                 let action = file_drop_action(target, &state_for_motion);
+                let hovered = file_drag_hover_target(&state_for_motion, target).is_some();
                 if let Some(row) = highlighted_row.upgrade() {
-                    if action.is_empty() {
-                        row.remove_css_class("drop-destination");
-                    } else {
+                    if hovered {
                         row.add_css_class("drop-destination");
+                    } else {
+                        row.remove_css_class("drop-destination");
                     }
                 }
                 arm_spring_load_navigation(&state_for_motion, target, &navigate_for_motion);
@@ -324,12 +326,13 @@ pub(super) fn column_rows(
                 if target.current_drop().is_none() {
                     return;
                 }
-                let action = file_drop_action(target, &state_for_value);
+                file_drop_action(target, &state_for_value);
+                let hovered = file_drag_hover_target(&state_for_value, target).is_some();
                 if let Some(row) = highlighted_row.upgrade() {
-                    if action.is_empty() {
-                        row.remove_css_class("drop-destination");
-                    } else {
+                    if hovered {
                         row.add_css_class("drop-destination");
+                    } else {
+                        row.remove_css_class("drop-destination");
                     }
                 }
                 arm_spring_load_navigation(&state_for_value, target, &navigate_for_value);
